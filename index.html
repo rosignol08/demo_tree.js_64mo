@@ -30,26 +30,40 @@
 </script>
 <!--     <script src="three.module.min.js"></script> <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script> -->
 <script type="module" src="./js/main.js"></script>
-<div id="start-screen" style="position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 1000; display: flex; justify-content: center; align-items: center;">
-  <button id="start-button" style="padding: 20px 40px; font-size: 24px; cursor: pointer;">Démarrer l'expérience</button>
-</div>
 
-<script>
-  document.getElementById('start-button').addEventListener('click', function() {
-    // Masquer l'écran de démarrage
-    document.getElementById('start-screen').style.display = 'none';
-    // Démarrer l'expérience (y compris l'audio)
-    initExperience();
-  });
-
-  function initExperience() {
-    // Ici vous pouvez démarrer l'audio sans problèmes
-    const audio = new Audio('js/assets/audio/mushroom-candy.mp3');
-    setTimeout(() => audio.play(), 5000);
-    
-    // Autres initialisations si nécessaires
-  }
-</script>
+<button id="startButton">Démarrer la démo</button>
+<style>
+    body, html {
+      margin: 0; padding: 0; overflow: hidden; height: 100%;
+      background: #c7c7c7;
+    }
+  
+    canvas#canvas {
+      display: block;
+      width: 100vw;
+      height: 100vh;
+    }
+  
+    #startButton {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 10;
+      padding: 1em 2em;
+      font-size: 1.2em;
+      background: #222;
+      color: white;
+      border: none;
+      border-radius: 10px;
+      cursor: pointer;
+    }
+  
+    #startButton:hover {
+      background: #444;
+    }
+  </style>
+  
 
 </body>
 </html>

@@ -68,6 +68,28 @@ function initScenes() {
   initScene1();
   initScene2();
 }
+
+const startButton = document.getElementById('startButton');
+const audio = new Audio("js/assets/audio/mushroom-candy.mp3"); // Assure-toi que le chemin est bon
+
+startButton.addEventListener('click', () => {
+  audio.play().then(() => {
+    // Démarrage autorisé, on lance la démo
+    initScenes();
+    clock.start(); // Reset et start
+    animationStarted = true;
+
+    startButton.style.display = 'none';
+  }).catch(err => {
+    console.error('Erreur lors de la lecture audio :', err);
+  });
+  audio.addEventListener('error', (e) => {
+    console.error('Erreur de chargement audio:', e);
+  });
+  
+});
+
+
 function initScene0() {
   camera.position.set(0, 2.5, -2);
   camera.lookAt(0, 1, 0); // le cube est à (0, 1, 0)
@@ -78,7 +100,7 @@ function initScene0() {
   const ambient = new THREE.AmbientLight(0xffffff, 3.5);
   scene0.add(ambient);
   setupComposerForScene(scene0, { bloom: false, glitch: false });
-  const clock = new THREE.Clock();
+  //const clock = new THREE.Clock();
   let phase = 0;
   scene0.userData.glitchEnabled = false;
   // Cube principal
@@ -95,10 +117,6 @@ function initScene0() {
   const light = new THREE.PointLight(0xffffff, 1, 100);
   light.visible = false;
   scene0.add(light);
-
-  // Audio
-  const audio = new Audio("js/assets/audio/mushroom-candy.mp3");
-  setTimeout(() => audio.play(), 5000);
 
   // Étapes temporelles
   setTimeout(() => {
@@ -445,13 +463,20 @@ function setupComposerForScene(scene, options = {}) {
   composers.push(composer);
 }
 
-initScenes();
+//initScenes();
 const clock = new THREE.Clock();
 let lastFrameTime = 0;
 const targetFPS = 10;
 
 function animate() {
   requestAnimationFrame(animate);
+// Ne rien faire si l'animation n'a pas encore démarré
+
+  // Ne rien faire si l'animation n'a pas encore démarré
+//  if (!animationStarted) return;
+  
+  // Vérifier si les scènes ont été initialisées
+  if (scenes.length === 0 || composers.length === 0) return;
 
   const now = performance.now();
   if (scenes[currentScene] === scenes[0]) {
@@ -468,7 +493,9 @@ function animate() {
   // Rendu avec le post-processing
   composer.render();
 }
+
 animate();
+console.log("animationStarted", animationStarted);
 
 /*  
 // Set up scenes
