@@ -56,17 +56,17 @@ glitchPass.goWild = true;
 glitchPass.enabled = false;
 composer.addPass(glitchPass);
 
-//bloomPass.threshold = 0.0;
 composer.addPass(bloomPass);
 
 // Initialize multiple scenes
-let currentScene = 1;
+let currentScene = 0;
 const scenes = [];
 const composers = [];
 function initScenes(analyser, dataArray) {
   initScene0();
   initScene1(analyser, dataArray);
-  initScene2();
+  initScene2(camera);
+  initCreditsScene(camera);
 }
 
 const startButton = document.getElementById('startButton');
@@ -439,7 +439,9 @@ function initScene1(analyser, dataArray) {
     const distSq = x * x + y * y + z * z;
     return distSq < 9;
   };
-
+setTimeout(() => {
+    currentScene = 2; //on change de scène ici
+  }, 121000);
   for (let i = 0; i < maxForms; i++) {
     const useCube = Math.random() > 0.5;
     const geom = useCube
@@ -547,8 +549,8 @@ loader.load("js/assets/models/fly_agaric_mushroom.glb", (gltf) => {
       }
       form.material.emissiveIntensity = form.userData.isLit ? 3 : 0.05;
     
-      // Transformation entre 66s et 70s
-      if (elapsedTime > 66 && elapsedTime < 70) {
+      // Transformation entre 67s et 70s
+      if (elapsedTime > 67 && elapsedTime < 70) {
         if (!form.userData.transformed && form.geometry.type !== 'BoxGeometry') {
           const stretchedBox = new THREE.BoxGeometry(
             0.2 + Math.random() * 0.3,
@@ -718,26 +720,214 @@ loader.load("js/assets/models/fly_agaric_mushroom.glb", (gltf) => {
   scenes.push(scene1);
 }
 
+function initScene2(camera) {
+    const scene2 = new THREE.Scene();
+    scene2.background = new THREE.Color(0x000000);
+    // Ajout du brouillard à la scène
+    const fogColor = new THREE.Color("#000000"); // Couleur du brouillard
 
-function initScene2() {
-  const scene2 = new THREE.Scene();
-  scene2.background = new THREE.Color(0x222222);
+    // Ajout de brouillard exponentiel
+    scene2.fog = new THREE.Fog(fogColor, 10, 1000);
 
-  const geom = new THREE.PlaneGeometry(10, 5);
-  const mat = new THREE.MeshBasicMaterial({
-    color: 0xffffff,
-    map: new THREE.TextureLoader().load("js/assets/textures/credits.png"),
+    // Ajout de la lumière ambiante
+    //const ambient = new THREE.AmbientLight(0xffffff, 3.5);
+    //scene2.add(ambient);
+
+    // Ajout de l'eau
+    const waterGeometry = new THREE.PlaneGeometry(100, 100);
+    const water = new Water(
+      waterGeometry,
+      {
+        textureWidth: 512,
+        textureHeight: 512,
+        waterNormals: new THREE.TextureLoader().load('js/assets/textures/Water_N_A.png', function (texture) {
+          texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+        }),
+        sunDirection: new THREE.Vector3(),
+        sunColor: 0x000000,
+        waterColor: 0x000000, // noir
+        distortionScale: 0.50,
+        fog: scene2.fog !== undefined,
+        alpha: 0.0,
+      }
+    );
+    water.rotation.x = -Math.PI / 2;
+    water.position.y = 0;
+    water.scale.set(10, 10, 10);
+    scene2.add(water);
+    setTimeout(() => {
+      currentScene = 3; //on change de scène ici
+    }, 135000);
+  const flyingObjects = [];
+
+  // Générer 600 objets
+  for (let i = 0; i < 600; i++) {
+    let newGeom;
+    const rand = Math.random();
+
+    if (rand < 0.66) {
+      // Sphère aléatoire
+      newGeom = new THREE.SphereGeometry(0.5 + Math.random(), 16, 16);
+    } else {
+      // Formes variées
+      const shapeType = Math.random();
+
+      if (shapeType < 0.25) {
+        newGeom = new THREE.TorusGeometry(
+          0.3 + Math.random() * 0.3,
+          0.1 + Math.random() * 0.1,
+          8 + Math.floor(Math.random() * 8),
+          8 + Math.floor(Math.random() * 8)
+        );
+      } else if (shapeType < 0.5) {
+        newGeom = new THREE.DodecahedronGeometry(0.4 + Math.random() * 0.3, 0);
+      } else if (shapeType < 0.75) {
+        newGeom = new THREE.TetrahedronGeometry(0.5 + Math.random() * 0.4, 0);
+      } else {
+        newGeom = new THREE.OctahedronGeometry(0.4 + Math.random() * 0.3, 0);
+      }
+    }
+
+    const mat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(Math.random(), Math.random(), Math.random()),
+      emissive: new THREE.Color(Math.random(), Math.random(), Math.random()),
+      emissiveIntensity: 1,
+      roughness: 0.5,
+      metalness: 0.5,
+    });
+
+    const mesh = new THREE.Mesh(newGeom, mat);
+
+    // Position aléatoire dans un cube plus grand (ex: 40x40x40)
+    mesh.position.set(
+      (Math.random() - 0.5) * 40,  // Keep x position the same
+      -20 - Math.random() * 20,    // Position below the floor (negative y)
+      (Math.random() - 0.5) * 40   // Keep z position the same
+    );
+
+    // Vitesse initiale aléatoire (plus petite pour ralentir le mouvement)
+    mesh.userData.velocity = new THREE.Vector3(
+      (Math.random() - 0.5) * 0.01,
+      0.02 + Math.random() * 0.02,
+      (Math.random() - 0.5) * 0.01
+    );
+
+    scene2.add(mesh);
+    flyingObjects.push(mesh);
+  }
+
+  // Angle pour faire tourner la caméra autour du nuage
+  let camAngle = 0;
+
+  scene2.userData.elapsedTime = 0; // initialisé à zéro
+
+scene2.userData.animate = function(deltaTime) {
+  scene2.userData.elapsedTime += deltaTime;
+
+  water.material.uniforms['time'].value += 0.1 / 10.0;
+  water.material.uniforms['distortionScale'].value = 0.5 + Math.sin(Date.now() * 0.001) * 0.5;
+  water.material.uniforms['waterColor'].value = new THREE.Color(0x000000);
+  water.material.uniforms['sunColor'].value = new THREE.Color(0xFFFFFF);
+
+  camAngle += deltaTime * 0.1; // rotation caméra
+  const radius = 50;
+  camera.position.set(
+    Math.cos(camAngle) * radius,
+    20,
+    Math.sin(camAngle) * radius
+  );
+  camera.lookAt(new THREE.Vector3(0, 10, 0));
+
+  flyingObjects.forEach((obj) => {
+    if (scene2.userData.elapsedTime < 3.5) {
+      // Pendant les 3.5 premières secondes, accélérer vers le haut
+      obj.userData.velocity.y += 0.02/60; // accélération vers le haut
+    } else {
+      // Après 3.5 secondes, ralentissement progressif
+      obj.userData.velocity.multiplyScalar(0.95);
+    }
+
+    obj.position.add(obj.userData.velocity);
+
+    // Léger flottement
+    obj.position.x += Math.sin(Date.now() * 0.001 + obj.id) * 0.01;
+    obj.position.z += Math.cos(Date.now() * 0.001 + obj.id) * 0.01;
   });
-  const mesh = new THREE.Mesh(geom, mat);
-  scene2.add(mesh);
+};
 
-  scene2.userData.animate = function () {
-    mesh.rotation.y = Math.sin(Date.now() * 0.001) * 0.2;
-  };
 
   scenes.push(scene2);
   setupComposerForScene(scene2);
 }
+
+function initCreditsScene(camera) {
+  const creditsScene = new THREE.Scene();
+  creditsScene.background = new THREE.Color(0x111111);
+  const elapsedTime = clock.getElapsedTime();
+  // Texte des crédits (tu peux modifier comme tu veux)
+  const creditsText = `
+  Réalisation : Romaric Chaffray
+  Musique : BUZZPSY
+  Développement : Romaric Chaffray
+  `;
+
+  // Création d'un canvas 2D pour dessiner le texte
+  const canvas = document.createElement('canvas');
+  canvas.width = 1024;
+  canvas.height = 512;
+  const ctx = canvas.getContext('2d');
+
+  ctx.fillStyle = 'white';
+  ctx.font = '60px Arial';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+
+  // Découpage des lignes et affichage centrée
+  const lines = creditsText.trim().split('\n');
+  lines.forEach((line, i) => {
+    ctx.fillText(line.trim(), canvas.width / 2, 60 + i * 60);
+  });
+
+  // Création d'une texture à partir du canvas
+  const texture = new THREE.CanvasTexture(canvas);
+  // Plan pour afficher le texte
+  const geometry = new THREE.PlaneGeometry(16, 8);
+  const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true });
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.position.y = 0;
+  creditsScene.add(mesh);
+
+  // Position caméra devant le plan
+  camera.position.set(0, 0, 5);
+  console.log(camera.position);
+  camera.lookAt(0, 0, 0);
+  setTimeout(() => {
+    if (audio.isPlaying)
+    {
+      audio.stop(); //on stop la musique
+    }
+    console.log("audio stopped");
+    console.log(audio);
+  }, 149000);
+  // Animation simple : le texte monte lentement
+  creditsScene.userData.animate = function(deltaTime) {
+    //mesh.position.y += deltaTime * 1; // vitesse de montée
+    camera.position.set(0, 0, 5);
+    camera.lookAt(new THREE.Vector3(0, 0, 0));
+    
+    // Remet à la position de départ si le texte est trop haut (loop)
+    if (mesh.position.y > 10) {
+      mesh.position.y = -8;
+    }
+    if (elapsedTime > 149 && audio && audio.isPlaying) {
+      audio.stop();
+    }
+  };
+
+  scenes.push(creditsScene);
+  setupComposerForScene(creditsScene);
+}
+
 
 function setupComposerForScene(scene, options = {}) {
   const composer = new EffectComposer(renderer);
@@ -761,8 +951,6 @@ function setupComposerForScene(scene, options = {}) {
   scene.userData.composer = composer; // <=== Important
   composers.push(composer);
 }
-
-
 
 //initScenes();
 const clock = new THREE.Clock();
