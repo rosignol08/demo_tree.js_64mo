@@ -59,7 +59,7 @@ composer.addPass(glitchPass);
 composer.addPass(bloomPass);
 
 // Initialize multiple scenes
-let currentScene = 0;
+let currentScene = 2;
 const scenes = [];
 const composers = [];
 function initScenes(analyser, dataArray) {
@@ -841,7 +841,7 @@ scene2.userData.animate = function(deltaTime) {
   flyingObjects.forEach((obj) => {
     if (scene2.userData.elapsedTime < 3.5) {
       // Pendant les 3.5 premières secondes, accélérer vers le haut
-      obj.userData.velocity.y += 0.02/60; // accélération vers le haut
+      obj.userData.velocity.y += 0.1/60; // accélération vers le haut
     } else {
       // Après 3.5 secondes, ralentissement progressif
       obj.userData.velocity.multiplyScalar(0.95);
