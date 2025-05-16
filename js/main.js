@@ -60,12 +60,12 @@ composer.addPass(glitchPass);
 composer.addPass(bloomPass);
 
 // Initialize multiple scenes
-let currentScene = 0;
+let currentScene = 1;
 const scenes = [];
 const composers = [];
-function initScenes() {
+function initScenes(analyser, dataArray) {
   initScene0();
-  initScene1();
+  initScene1(analyser, dataArray);
   initScene2();
 }
 
@@ -75,7 +75,7 @@ const audio = new Audio("js/assets/audio/mushroom-candy.mp3"); // Assure-toi que
 startButton.addEventListener('click', () => {
   audio.play().then(() => {
     // Démarrage autorisé, on lance la démo
-    initScenes();
+    initScenes(analyser, dataArray);
     clock.start(); // Reset et start
     animationStarted = true;
 
@@ -88,6 +88,16 @@ startButton.addEventListener('click', () => {
   });
   
 });
+
+//pour le son
+const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+const track = audioContext.createMediaElementSource(audio);
+const analyser = audioContext.createAnalyser();
+analyser.fftSize = 64;
+const dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+track.connect(analyser);
+analyser.connect(audioContext.destination);
 
 
 function initScene0() {
@@ -109,7 +119,7 @@ function initScene0() {
     new THREE.MeshStandardMaterial({ color: 0x00ff00 })
   );
   cube.position.set(0, 0, 0);
-  console.log("cube", cube);
+  cube.visible = false; //on attend 5 secondes avant de l'afficher
   scene0.add(cube);
 
   const spheres = [];
@@ -117,20 +127,26 @@ function initScene0() {
   const light = new THREE.PointLight(0xffffff, 1, 100);
   light.visible = false;
   scene0.add(light);
-
-  // Étapes temporelles
   setTimeout(() => {
+    cube.visible = true;
+  }, 5000);
+  
+  
     // Ajout des sphères
     for (let i = 0; i < 3; i++) {
       const s = new THREE.Mesh(
         new THREE.SphereGeometry(0.2),
         new THREE.MeshStandardMaterial({ color: Math.random() * 0xffffff })
       );
+      s.visible = false;
       spheres.push(s);
       scene0.add(s);
     }
-    phase = 1;
-  }, 5000);
+  
+  setTimeout(() => {
+    spheres.forEach((s) => s.visible = true);
+  }, 15000);
+  
 
   setTimeout(() => {
     // Chargement modèle GLTF
@@ -188,17 +204,29 @@ function initScene0() {
         }
       }
     });
-  }, 15000);
-
-  setTimeout(() => {
-    light.visible = true;
-    light.position.set(0, 5, 5);
   }, 20000);
 
   setTimeout(() => {
-    phase = 2;
-  }, 30000);
+    light.visible = true;
+    light.position.set(0, 5, 5);//verifier ce truc
+  }, 100);
 
+  setTimeout(() => {
+    phase = 1; // déclenche le glitch des sphères uniquement
+  }, 27000);
+  
+  setTimeout(() => {
+    phase = 2;// déclenche le glitch du cube
+  }, 37000);
+
+  setTimeout(() => {
+    phase = 3;//bug champignon
+  }, 46000);
+  
+  setTimeout(() => {
+    currentScene = 1; //oa change de scène ici
+  }, 54000);
+  
   // Animation
   scene0.userData.animate = function () {
     const elapsed = clock.getElapsedTime();
@@ -211,7 +239,14 @@ function initScene0() {
       s.position.set(Math.cos(angle) * 2, 0, Math.sin(angle) * 2);
     });
 
-    if (phase === 2) {
+    if (phase >= 1) {
+      // Sphères : wireframe + échelle aléatoire
+      spheres.forEach((s) => {
+        s.material.wireframe = true;
+        const scale = 1 + (Math.random() - 0.5) * 0.8; // variation entre 0.6 et 1.4
+        s.scale.set(scale, scale, scale);
+      });}
+    if (phase >= 2) {
       // Cube : déformation brutale aléatoire à chaque frame
       cube.scale.set(
         1 + (Math.random() - 0.5) * 0.5, // variation x entre 0.75 et 1.25
@@ -221,13 +256,8 @@ function initScene0() {
 
       // Couleur du cube aléatoire
       cube.material.color.setHSL(Math.random(), 1, 0.5);
-
-      // Sphères : wireframe + échelle aléatoire
-      spheres.forEach((s) => {
-        s.material.wireframe = true;
-        const scale = 1 + (Math.random() - 0.5) * 0.8; // variation entre 0.6 et 1.4
-        s.scale.set(scale, scale, scale);
-      });
+    }
+    if (phase >= 3) {
 
       // Modification du modèle 3D (s'il existe)
       if (scene0.userData.model) {
@@ -312,7 +342,7 @@ function initScene0() {
           }
         });
       }
-
+      
       light.intensity = Math.abs(Math.sin(elapsed * 10)) * 2;
     }
 
@@ -327,8 +357,10 @@ function initScene0() {
     } else if (elapsed >= 30 && elapsed <= 50) {
       // Augmentation linéaire de 1% à 5% entre 30s et 50s
       glitchProbability = 0.01 + ((elapsed - 30) / (50 - 30)) * (0.05 - 0.01);
-    } else {
-      glitchProbability = 0.1; // 5% au-delà de 50 secondes
+    } else if (elapsed <= 50) {
+      glitchProbability = 0.1; // 10% avant 50 secondes
+    }else{
+      glitchProbability = 0.5; // 50% après 50 secondes
     }
 
     // Tirage aléatoire
@@ -386,39 +418,306 @@ function onWindowResize() {
   });
 }
 
-// Add event listener for window resize
+//pour le resize
 window.addEventListener("resize", onWindowResize);
 
-function initScene1() {
+function initScene1(analyser, dataArray) {
   const scene1 = new THREE.Scene();
   scene1.background = new THREE.Color(0x000000);
 
-  const cubes = [];
-  const tunnelLength = 200;
-  for (let i = 0; i < 1000; i++) {
-    const geom = new THREE.BoxGeometry(0.5, 0.5, 0.5);
-    const mat = new THREE.MeshBasicMaterial({
-      color: Math.random() * 0xffffff,
+  const bloomParams = { bloom: true };
+  setupComposerForScene(scene1, bloomParams);
+
+  const forms = [];
+  const maxForms = 600;
+  const tunnelHeight = 100;
+
+  const light = new THREE.AmbientLight(0xffffff, 1.5);
+  scene1.add(light);
+
+  const isNearCamera = (x, y, z) => {
+    const distSq = x * x + y * y + z * z;
+    return distSq < 9;
+  };
+
+  for (let i = 0; i < maxForms; i++) {
+    const useCube = Math.random() > 0.5;
+    const geom = useCube
+      ? new THREE.BoxGeometry(
+          0.5 + Math.random() * 2,
+          0.5 + Math.random() * 2,
+          0.5 + Math.random() * 2
+        )
+      : new THREE.SphereGeometry(0.5 + Math.random(), 16, 16);
+
+    const mat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color(Math.random(), Math.random(), Math.random()),
+      emissive: new THREE.Color(Math.random(), Math.random(), Math.random()),
+      emissiveIntensity: 1 + Math.random() * 2,
     });
+
     const mesh = new THREE.Mesh(geom, mat);
-    mesh.position.set(
-      (Math.random() - 0.5) * 20,
-      (Math.random() - 0.5) * 20,
-      -Math.random() * tunnelLength
-    );
+
+    let x, y, z;
+    do {
+      x = (Math.random() - 0.5) * 40;
+      y = -Math.random() * tunnelHeight;
+      z = (Math.random() - 0.5) * 40;
+    } while (isNearCamera(x, y, z));
+
+    mesh.position.set(x, y, z);
+
+    mesh.userData = {
+      isLit: false,
+      lastToggleTime: 0,
+      transformed: false,
+      shouldBeRectangle: false,
+    };
+
     scene1.add(mesh);
-    cubes.push(mesh);
+    forms.push(mesh);
   }
 
-  let zMove = 0;
+//chargement du modele 3D
+const loader = new GLTFLoader();
+loader.load("js/assets/models/fly_agaric_mushroom.glb", (gltf) => {
+  const model = gltf.scene;
+  // Position the model but don't make it visible
+  model.position.y = 1;
+  model.position.x = 0;
+  model.position.z = 0;
+  model.scale.set(0.015, 0.015, 0.015);
+  model.visible = false; // Keep the model hidden
+  scene1.add(model);
+  
+  // Store reference to the model
+  scene1.userData.model = model;
+  
+  // No clones are created
+});
+
+  camera.position.set(0, 0, 0);
+  camera.rotation.set(-Math.PI / 2, 0, 0);
+  let lastBeatTime = 0;
+  const BEAT_INTERVAL = 400;
+  const LIGHT_DURATION = 800;
+  const LIGHT_COUNT = 50;
+
   scene1.userData.animate = function () {
-    zMove += 0.5;
-    camera.position.z = zMove % tunnelLength;
+    analyser.getByteFrequencyData(dataArray);
+    const speed = 0.6;
+    const elapsedTime = clock.getElapsedTime();
+    const now = performance.now();
+
+    const shakeFrequency = 2.0;
+    const shakeAmplitude = 0.06;
+
+    const xShake = Math.sin(elapsedTime * shakeFrequency) * shakeAmplitude;
+    const yShake = Math.sin(elapsedTime * shakeFrequency * 1.3) * shakeAmplitude;
+    const zShake = Math.cos(elapsedTime * shakeFrequency * 0.7) * shakeAmplitude;
+
+    camera.rotation.set(-Math.PI / 2 + xShake, yShake, zShake);
+
+    const vibrationPulse = Math.sin(elapsedTime * 0.8) > 0.8;
+    if (vibrationPulse) {
+      const vibrationStrength = 0.2;
+      camera.position.x += (Math.random() - 0.5) * vibrationStrength;
+      camera.position.z += (Math.random() - 0.5) * vibrationStrength;
+      camera.position.y += (Math.random() - 0.5) * vibrationStrength * 0.3;
+    }
+
+    if (now - lastBeatTime > BEAT_INTERVAL) {
+      lastBeatTime = now;
+      const shuffled = forms.sort(() => 0.5 - Math.random());
+      const toLight = shuffled.slice(0, LIGHT_COUNT);
+
+      toLight.forEach(form => {
+        form.userData.isLit = true;
+        form.userData.lightStart = now;
+      });
+    }
+
+    forms.forEach((form) => {
+      // Déplacement vertical
+      form.position.y += speed;
+    
+      // Gestion de l'éclairage temporaire
+      if (form.userData.isLit && now - form.userData.lightStart > LIGHT_DURATION) {
+        form.userData.isLit = false;
+      }
+      form.material.emissiveIntensity = form.userData.isLit ? 3 : 0.05;
+    
+      // Transformation entre 66s et 70s
+      if (elapsedTime > 66 && elapsedTime < 70) {
+        if (!form.userData.transformed && form.geometry.type !== 'BoxGeometry') {
+          const stretchedBox = new THREE.BoxGeometry(
+            0.2 + Math.random() * 0.3,
+            0.2 + Math.random() * 0.3,
+            5 + Math.random() * 5
+          );
+          const angle = Math.atan2(-form.position.z, -form.position.x);
+          form.rotation.y = angle;
+          form.rotation.x = Math.random() * 0.2 - 0.1;
+    
+          form.geometry.dispose();
+          form.geometry = stretchedBox;
+          form.userData.transformed = true;
+        }
+        if (form.position.y > 1) {
+          form.userData.shouldBeRectangle = true;
+        }
+      } 
+      // Transformation entre 70s et 80s
+      else if (elapsedTime >= 70 && elapsedTime < 80) {
+        if (form.geometry.type === 'SphereGeometry') {
+          const stretchedCube = new THREE.BoxGeometry(
+            0.2 + Math.random() * 0.3,
+            0.2 + Math.random() * 0.3,
+            5 + Math.random() * 5
+          );
+          form.geometry.dispose();
+          form.geometry = stretchedCube;
+          form.userData.transformed = true;
+        }
+      }
+    // Matrix effect (green wireframes) between 108s and 121s
+    else if (elapsedTime >= 108 && elapsedTime < 121) {
+      form.material.wireframe = true;
+    form.material.color.set(0x00ff00);        // vert pur
+    form.material.emissive.set(0x00ff00);     // vert lumineux aussi
+    if (form.geometry.type === 'SphereGeometry') {
+      // Créer un nouveau cube avec taille aléatoire
+      const newBox = new THREE.BoxGeometry(
+        0.5 + Math.random() * 2,  // largeur x
+        0.5 + Math.random() * 2,  // hauteur y
+        0.5 + Math.random() * 2   // profondeur z
+      );
+      // Libérer l'ancienne géométrie
+      form.geometry.dispose();
+      // Remplacer par la nouvelle
+      form.geometry = newBox;
+      // Marquer que l'objet est transformé (si tu utilises ce flag)
+      form.userData.transformed = true;
+    }
+  } else {
+    // Si tu veux remettre à l'état normal avant 95s (optionnel)
+    form.material.wireframe = false;
+    // Tu peux aussi remettre la couleur d'origine ici si besoin
+  }
+      // Recyclage dès que la forme dépasse y=1
+      if (form.position.y > 1) {
+        const rand = Math.random();
+        let newGeom;
+    
+        if (rand < 0.33) {
+          // Cube aléatoire
+          newGeom = new THREE.BoxGeometry(
+            0.5 + Math.random() * 2,
+            0.5 + Math.random() * 2,
+            0.5 + Math.random() * 2
+          );
+        } else if (rand < 0.66) {
+          // Sphère aléatoire
+          newGeom = new THREE.SphereGeometry(0.5 + Math.random(), 16, 16);
+    
+          // Changer immédiatement les couleurs
+          const newColor = new THREE.Color(Math.random(), Math.random(), Math.random());
+          const newEmissive = new THREE.Color(Math.random(), Math.random(), Math.random());
+          form.material.color.copy(newColor);
+          form.material.emissive.copy(newEmissive);
+        } else {
+          // Formes variées : tore, dodécaèdre, tétraèdre, octaèdre
+          const shapeType = Math.random();
+    
+          if (shapeType < 0.25) {
+            newGeom = new THREE.TorusGeometry(
+              0.3 + Math.random() * 0.3,
+              0.1 + Math.random() * 0.1,
+              8 + Math.floor(Math.random() * 8),
+              8 + Math.floor(Math.random() * 8)
+            );
+          } else if (shapeType < 0.5) {
+            newGeom = new THREE.DodecahedronGeometry(0.4 + Math.random() * 0.3, 0);
+          } else if (shapeType < 0.75) {
+            newGeom = new THREE.TetrahedronGeometry(0.5 + Math.random() * 0.4, 0);
+          } else {
+            newGeom = new THREE.OctahedronGeometry(0.4 + Math.random() * 0.3, 0);
+          }
+    
+          // Effet de changement progressif des couleurs après 80s
+          if (elapsedTime > 80) {
+            const colorShift = 0.01;
+            form.material.color.offsetHSL(Math.random() * colorShift, 0, 0);
+            form.material.emissive.offsetHSL(Math.random() * colorShift, 0, 0);
+          }
+        }
+    
+        // Appliquer la nouvelle géométrie si définie
+        if (newGeom) {
+          form.geometry.dispose();
+          form.geometry = newGeom;
+        }
+    
+        // Réinitialiser la position hors caméra
+        let x, z;
+        do {
+          x = (Math.random() - 0.5) * 60;
+          z = (Math.random() - 0.5) * 60;
+        } while (isNearCamera(x, 0, z));
+    
+        form.position.set(x, -tunnelHeight, z);
+        form.userData.isLit = false;
+        form.userData.lightStart = 0;
+      }
+    });
+    
+    // Gestion du glitch pour scene1
+    const composer = scene1.userData.composer;
+    let glitchProbability;
+    
+    if (elapsedTime < 40) {
+      // 1% chance avant 40 secondes
+      } else if (elapsedTime >= 40 && elapsedTime < 80) {
+        // Maintenir à 1% entre 40s et 80s
+        glitchProbability = 0.01;
+      } else if (elapsedTime >= 80 && elapsedTime < 108) {
+        // Augmentation drastique de 1% à 100% entre 80s et 108s
+        glitchProbability = 0.01 + ((elapsedTime - 80) / (108 - 80)) * (1.0 - 0.01);
+      } else {
+        // Descend à 0 après 108 secondes
+        glitchProbability = 0.0;
+      }
+    
+    const random = Math.random();
+    
+    if (random < glitchProbability && !scene1.userData.glitchEnabled) {
+      composer.addPass(glitchPass);
+      scene1.userData.glitchEnabled = true;
+      glitchPass.enabled = true;
+      
+      setTimeout(() => {
+      const index = composer.passes.indexOf(glitchPass);
+      if (index !== -1) {
+        composer.passes.splice(index, 1);
+      }
+      scene1.userData.glitchEnabled = false;
+      glitchPass.enabled = false;
+      }, 10 + Math.random() * 50); // 10 à 60 ms
+    } else if (scene1.userData.glitchEnabled && random >= glitchProbability) {
+      const index = composer.passes.indexOf(glitchPass);
+      if (index !== -1) {
+      composer.passes.splice(index, 1);
+      }
+      scene1.userData.glitchEnabled = false;
+      glitchPass.enabled = false;
+    }
+
+    scene1.userData.composer.render();
   };
 
   scenes.push(scene1);
-  setupComposerForScene(scene1);
 }
+
 
 function initScene2() {
   const scene2 = new THREE.Scene();
@@ -446,7 +745,7 @@ function setupComposerForScene(scene, options = {}) {
 
   const bloomPass = new UnrealBloomPass(
     new THREE.Vector2(window.innerWidth, window.innerHeight),
-    0.3,
+    .5,
     1.5,
     0.0
   );
@@ -462,6 +761,8 @@ function setupComposerForScene(scene, options = {}) {
   scene.userData.composer = composer; // <=== Important
   composers.push(composer);
 }
+
+
 
 //initScenes();
 const clock = new THREE.Clock();
@@ -496,230 +797,3 @@ function animate() {
 
 animate();
 console.log("animationStarted", animationStarted);
-
-/*  
-// Set up scenes
-function initScenes() {
-    // Scene 0: Water portal with doors
-    const scene0 = new THREE.Scene();
-    scene0.background = new THREE.Color('#c7c7c7');
-    scene0.fog = new THREE.FogExp2(new THREE.Color('#c7c7c7'), 0.035);
-    
-    // Water
-    const waterGeometry = new THREE.PlaneGeometry(100, 100);
-    const water = new Water(
-        waterGeometry,
-        {
-            textureWidth: 512,
-            textureHeight: 512,
-            waterNormals: new THREE.TextureLoader().load('js/assets/textures/waternormals.jpg', function (texture) {
-                texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-            }),
-            sunDirection: new THREE.Vector3(),
-            sunColor: 0x000000,
-            waterColor: 0x000000,
-            distortionScale: 0.50,
-            fog: scene0.fog !== undefined,
-            alpha: 0.0,
-        }
-    );
-    water.rotation.x = -Math.PI / 2;
-    water.position.y = 0;
-    scene0.add(water);
-    
-    // Doors setup
-    const doorGeometry = new THREE.BoxGeometry(2, 4, 0.1);
-    const lanterneGeometry = new THREE.SphereGeometry(0.13);
-    const radius = 6;
-    const doors = [];
-    
-    // Orange door
-    let door = new THREE.Mesh(doorGeometry, new THREE.MeshStandardMaterial({ color: 0xf39c12, emissive: 0xf39c12, emissiveIntensity: 5, toneMapped: false }));
-    door.position.set(0, 1, radius);
-    door.lookAt(0, 1, 0);
-    door.userData.url = "page_connexion.html";
-    doors.push(door);
-    
-    let largeur_lumiere = 2.0;
-    let hauteur_lumiere = 4.0;
-    let intensite = 5;
-    let couleur = 0xf39c12;
-    let rectangle_light = new THREE.RectAreaLight(couleur, intensite, largeur_lumiere, hauteur_lumiere);
-    rectangle_light.position.set(0, 0.5, radius);
-    rectangle_light.power = 100;
-    rectangle_light.lookAt(0, 1, 0);
-    scene0.add(rectangle_light);
-    
-    // Blue door
-    door = new THREE.Mesh(doorGeometry, new THREE.MeshStandardMaterial({ color: 0x2192d3, emissive: 0x2192d3, emissiveIntensity: 5, toneMapped: false }));
-    door.position.set(0, 1, -radius);
-    door.lookAt(0, 1, 0);
-    door.userData.url = "presentation_page.html";
-    doors.push(door);
-    
-    largeur_lumiere = 2.0;
-    hauteur_lumiere = 4.0;
-    intensite = 5;
-    couleur = 0x2192d3;
-    rectangle_light = new THREE.RectAreaLight(couleur, intensite, largeur_lumiere, hauteur_lumiere);
-    rectangle_light.position.set(0, 0.5, -radius);
-    rectangle_light.power = 100;
-    rectangle_light.lookAt(0, 1, 0);
-    scene0.add(rectangle_light);
-    
-    // Add doors to scene
-    doors.forEach(door => scene0.add(door));
-    
-    // Add plague doctor model
-    const loader = new GLTFLoader();
-    let model; 
-    loader.load('js/assets/docteur/steampunk_plague_doctor.glb', function (gltf) {
-        model = gltf.scene;
-        model.position.set(-20, 1.45, 0);
-        model.scale.set(1.5, 1.5, 1.5);
-        model.rotation.y = -1;
-        scene0.add(model);
-    }, undefined, function (error) {
-        console.error(error);
-    });
-    
-    // Lantern
-    let door_lanterne = new THREE.Mesh(lanterneGeometry, new THREE.MeshStandardMaterial({ color: 0xf39c12, emissive: 0xf39c12, emissiveIntensity: 5, toneMapped: false }));
-    door_lanterne.position.set(-20, 2, 0.2);
-    door_lanterne.lookAt(0, 1, 0);
-    scene0.add(door_lanterne);
-    
-    // Set up scene animation
-    scene0.userData.animate = function() {
-        water.material.uniforms['time'].value += 0.1 / 60.0;
-    };
-    
-    // Raycaster for door interactions
-    const raycaster = new THREE.Raycaster();
-    const mouse = new THREE.Vector2();
-    let hoveredDoor = null;
-    
-    // Add the scene to scenes array
-    scenes.push(scene0);
-    
-    // Scene 1: Tunnel with cubes
-    const scene1 = new THREE.Scene();
-    scene1.background = new THREE.Color(0x000000);
-    const cubes = [];
-    const tunnelLength = 200;
-
-    for (let i = 0; i < 1000; i++) {
-        const g = new THREE.BoxGeometry(0.5, 0.5, 0.5);
-        const m = new THREE.MeshBasicMaterial({ color: Math.random() * 0xffffff });
-        const mesh = new THREE.Mesh(g, m);
-        mesh.position.x = (Math.random() - 0.5) * 20;
-        mesh.position.y = (Math.random() - 0.5) * 20;
-        mesh.position.z = -Math.random() * tunnelLength;
-        scene1.add(mesh);
-        cubes.push(mesh);
-    }
-
-    let zMove = 0;
-    scene1.userData.animate = () => {
-        zMove += 0.5;
-        camera.position.z = zMove % tunnelLength;
-    };
-
-    scenes.push(scene1);
-    
-    // Scene 2: Credits (you can customize this)
-    const scene2 = new THREE.Scene();
-    scene2.background = new THREE.Color(0x222222);
-    
-    const textGeometry = new THREE.PlaneGeometry(10, 5);
-    const textMaterial = new THREE.MeshBasicMaterial({ 
-        color: 0xffffff,
-        map: new THREE.TextureLoader().load('js/assets/textures/credits.png')
-    });
-    const textMesh = new THREE.Mesh(textGeometry, textMaterial);
-    scene2.add(textMesh);
-    
-    scene2.userData.animate = () => {
-        textMesh.rotation.y = Math.sin(Date.now() * 0.001) * 0.2;
-    };
-    
-    scenes.push(scene2);
-    
-    // Setup composers for each scene
-    scenes.forEach(scene => {
-        const composer = new EffectComposer(renderer);
-        const renderPass = new RenderPass(scene, camera);
-        composer.addPass(renderPass);
-        
-        const bloomPass = new UnrealBloomPass(
-            new THREE.Vector2(window.innerWidth, window.innerHeight),
-            0.30, 1.5, 0.0
-        );
-        composer.addPass(bloomPass);
-        
-        composers.push(composer);
-    });
-}
-
-// Initialize the main setup
-function init() {
-    // Camera setup
-    camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 0.1, 20000);
-    camera.position.set(5, 1.5, 0);
-    camera.lookAt(0, 1.5, 0);
-    
-    // Renderer setup
-    renderer = new THREE.WebGLRenderer({ canvas: document.getElementById('canvas') });
-    renderer.setPixelRatio(window.devicePixelRatio);
-    renderer.setSize(window.innerWidth, window.innerHeight);
-    renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    renderer.toneMappingExposure = 0.3;
-    
-    // Initialize scenes
-    initScenes();
-    
-    
-    // Handle window resize
-    window.addEventListener('resize', () => {
-        camera.aspect = window.innerWidth / window.innerHeight;
-        camera.updateProjectionMatrix();
-        renderer.setSize(window.innerWidth, window.innerHeight);
-        composers.forEach(composer => composer.setSize(window.innerWidth, window.innerHeight));
-    });
-}
-
-
-// Function to switch between scenes
-function switchScene(index) {
-    if (index >= 0 && index < scenes.length) {
-        currentScene = index;
-        
-        // Reset camera position for specific scenes
-        if (index === 0) {
-            camera.position.set(5, 1.5, 0);
-            camera.lookAt(0, 1.5, 0);
-        } else if (index === 1) {
-            camera.position.set(0, 0, 5);
-            camera.lookAt(0, 0, 0);
-        }
-    }
-}
-
-// Animation function
-function animate() {
-    requestAnimationFrame(animate);
-    
-    // Run scene-specific animation
-    const currentSceneObj = scenes[currentScene];
-    if (currentSceneObj && currentSceneObj.userData.animate) {
-        currentSceneObj.userData.animate();
-    }
-    
-    // Render with the current composer
-    composers[currentScene].render();
-}
-
-// Initialize everything
-init();
-animate();
-*/
