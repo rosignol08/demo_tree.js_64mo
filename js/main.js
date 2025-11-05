@@ -59,7 +59,7 @@ composer.addPass(glitchPass);
 composer.addPass(bloomPass);
 
 // Initialize multiple scenes
-let currentScene = 2;
+let currentScene = 0;
 const scenes = [];
 const composers = [];
 function initScenes(analyser, dataArray) {
@@ -73,6 +73,9 @@ const startButton = document.getElementById('startButton');
 const audio = new Audio("js/assets/audio/mushroom-candy.mp3"); // Assure-toi que le chemin est bon
 
 startButton.addEventListener('click', () => {
+  if (audioContext.state === 'suspended') {
+    audioContext.resume();
+  }
   audio.play().then(() => {
     // Démarrage autorisé, on lance la démo
     initScenes(analyser, dataArray);
