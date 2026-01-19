@@ -2,6 +2,7 @@
 <html lang="fr">
 <head>
   <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Demo Three.js</title>
   <style>
     body, html {
@@ -22,8 +23,9 @@
         "imports": {
             "three": "./js/three.module.min.js",
             "gltf": "./js/GLTFLoader.js",
-            "water": "./js/Water.js",
             "orbitcontrols": "./js/OrbitControls.js",
+            "water": "./js/Water.js",
+            "three-gpu-pathtracer": "https://cdn.jsdelivr.net/npm/three-gpu-pathtracer@0.0.23/+esm",
             "three/addons/": "https://unpkg.com/three@latest/examples/jsm/"
     }
 }
@@ -31,7 +33,77 @@
 <!--     <script src="three.module.min.js"></script> <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script> -->
 <script type="module" src="./js/main.js"></script>
 
-<button id="startButton">Démarrer la démo</button>
+<!--  <button id="startButton">Démarrer la démo</button> -->
+<div id="player-controls">
+  <div id="time-display">0:00 / 0:00</div>
+  <div id="progress-container">
+    <div id="progress-bar"></div>
+  </div>
+</div>
+
+<style>
+  #player-controls {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+    height: 60px; /* Zone cliquable confortable */
+    background: linear-gradient(to top, rgba(0,0,0,0.9), transparent);
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    padding-bottom: 20px;
+    z-index: 100;
+    opacity: 0; /* Caché au début */
+    transition: opacity 0.5s;
+    pointer-events: none; /* Laisse passer les clics sauf sur la barre */
+  }
+
+  #player-controls.visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  #time-display {
+    color: white;
+    font-family: monospace;
+    font-size: 14px;
+    text-align: center;
+    margin-bottom: 5px;
+    text-shadow: 0 0 5px black;
+  }
+
+  #progress-container {
+    width: 90%;
+    height: 10px;
+    background: rgba(255, 255, 255, 0.2);
+    margin: 0 auto;
+    border-radius: 5px;
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+    transition: height 0.2s;
+  }
+
+  #progress-container:hover {
+    height: 15px; /* Grossit au survol */
+  }
+
+  #progress-bar {
+    width: 0%;
+    height: 100%;
+    background: #00ff00; /* Vert fluo */
+    box-shadow: 0 0 10px #00ff00;
+    transition: width 0.1s linear;
+  }
+</style>
+
+<div id="drop-zone" style="position: absolute; top:0; left:0; width:100%; height:100%; background:rgba(0,0,0,0.8); color:white; display:flex; justify-content:center; align-items:center; z-index:999; flex-direction:column; cursor:pointer;">
+    <h1>Glisse ton MP3 ici</h1>
+    <p>ou clique pour choisir</p>
+    <input type="file" id="file-input" accept="audio/*" style="display:none;">
+</div>
+
 <style>
     body, html {
       margin: 0; padding: 0; overflow: hidden; height: 100%;

@@ -1,987 +1,516 @@
 import * as THREE from "three";
-import { GLTFLoader } from "gltf";
-import { OrbitControls } from "orbitcontrols";
-import { Water } from "water";
 import { EffectComposer } from "three/addons/postprocessing/EffectComposer.js";
 import { RenderPass } from "three/addons/postprocessing/RenderPass.js";
-import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 import { UnrealBloomPass } from "three/addons/postprocessing/UnrealBloomPass.js";
 import { GlitchPass } from "three/addons/postprocessing/GlitchPass.js";
+import { OutputPass } from "three/addons/postprocessing/OutputPass.js";
 
-// Initialisation de la scène
-const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(
-  90,
-  window.innerWidth / window.innerHeight,
-  0.1,
-  20000
-);
-const renderer = new THREE.WebGLRenderer({
-  canvas: document.getElementById("canvas"),
-});
+// --- CONFIGURATION ---
+let maxBassDetected = 150; // On démarre avec un "plancher" (pour ignorer le bruit de fond)
+let beatThreshold = 255;   // Valeur initiale
+const BEATS_PER_SCENE = 32;
 
-let animationStarted = false;//pour demander le début de la démo
+// --- VARIABLES POUR LE CALIBRAGE ---
+let calibrationDone = false; // Pour ne le faire qu'une fois
+let startTime = 0;         // Pour chronométrer les 15s
 
-renderer.setPixelRatio(window.devicePixelRatio);
+// --- UI ELEMENTS ---
+const controlsContainer = document.getElementById('player-controls');
+const progressContainer = document.getElementById('progress-container');
+const progressBar = document.getElementById('progress-bar');
+const timeDisplay = document.getElementById('time-display');
+
+// --- GLOBALS ---
+const renderer = new THREE.WebGLRenderer({ canvas: document.getElementById("canvas"), antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.setPixelRatio(window.devicePixelRatio);
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-//renderer.toneMapping = THREE.NoToneMapping;
-renderer.toneMappingExposure = 0.3;
-//scene.background = new THREE.Color(0x000000);
-//scene.background = 0x0000ff;
-//renderer.setClearColor( 0x000000, 1);
-scene.background = new THREE.Color("#c7c7c7");
 
-// Ajout du brouillard à la scène
-const fogColor = new THREE.Color("#c7c7c7"); // Couleur du brouillard
-//scene.fog = new THREE.Fog(fogColor, 1, 1000);
+let animationStarted = false;
+let audioContext, analyser, dataArray, source, audioElement;
+let lastBeatTime = 0;
+let beatCounter = 0;
 
-// Ajout de brouillard exponentiel
-scene.fog = new THREE.FogExp2(fogColor, 0.035);
-
-//shaders
-const renderPass = new RenderPass(scene, camera);
-const composer = new EffectComposer(renderer);
-composer.addPass(renderPass);
-
-const bloomPass = new UnrealBloomPass(
-  new THREE.Vector2(window.innerWidth, window.innerHeight),
-  0.3,
-  1.5,
-  0.0
-);
-
-let glitchPass = new GlitchPass();
-glitchPass.goWild = true;
-glitchPass.enabled = false;
-composer.addPass(glitchPass);
-
-composer.addPass(bloomPass);
-
-// Initialize multiple scenes
-let currentScene = 2;
+// Gestion des scènes
+let currentSceneIndex = 0;
 const scenes = [];
-const composers = [];
-function initScenes(analyser, dataArray) {
-  initScene0();
-  initScene1(analyser, dataArray);
-  initScene2(camera);
-  initCreditsScene(camera);
+// On garde une seule instance des pass pour les manipuler globalement
+let composer, bloomPass, glitchPass;
+let isTransitioning = false;
+
+// --- 1. SETUP AUDIO & DRAG DROP ---
+const dropZone = document.getElementById('drop-zone');
+const fileInput = document.getElementById('file-input');
+
+['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+    dropZone.addEventListener(eventName, (e) => { e.preventDefault(); e.stopPropagation(); }, false);
+});
+
+dropZone.addEventListener('drop', (e) => handleFile(e.dataTransfer.files[0]));
+dropZone.addEventListener('click', () => fileInput.click());
+fileInput.addEventListener('change', (e) => handleFile(e.target.files[0]));
+
+function handleFile(file) {
+    if (!file || !file.type.startsWith('audio/')) return alert("Audio file only!");
+    const url = URL.createObjectURL(file);
+    audioElement = new Audio();
+    audioElement.src = url;
+    dropZone.style.display = 'none';
+    startExperience();
 }
 
-const startButton = document.getElementById('startButton');
-const audio = new Audio("js/assets/audio/mushroom-candy.mp3"); // Assure-toi que le chemin est bon
+function startExperience() {
+    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+    source = audioContext.createMediaElementSource(audioElement);
+    analyser = audioContext.createAnalyser();
+    analyser.fftSize = 512;
+    source.connect(analyser);
+    analyser.connect(audioContext.destination);
+    dataArray = new Uint8Array(analyser.frequencyBinCount);
 
-startButton.addEventListener('click', () => {
-  audio.play().then(() => {
-    // Démarrage autorisé, on lance la démo
-    initScenes(analyser, dataArray);
-    clock.start(); // Reset et start
+    // Initialisation unique du Composer (plus performant)
+    initGlobalComposer();
+    
+    // Création des scènes
+    initSceneCore();      // Index 0
+    initSceneHyperspeed(); // Index 1
+    initSceneMatrix();    // Index 2
+    initSceneTombe();    // Index 3
+
+    setupControls();
+    // Initialisation du timer pour le calibrage
+    startTime = performance.now();
+
+    audioElement.play();
     animationStarted = true;
-
-    startButton.style.display = 'none';
-  }).catch(err => {
-    console.error('Erreur lors de la lecture audio :', err);
-  });
-  audio.addEventListener('error', (e) => {
-    console.error('Erreur de chargement audio:', e);
-  });
-  
-});
-
-//pour le son
-const audioContext = new (window.AudioContext || window.webkitAudioContext)();
-const track = audioContext.createMediaElementSource(audio);
-const analyser = audioContext.createAnalyser();
-analyser.fftSize = 64;
-const dataArray = new Uint8Array(analyser.frequencyBinCount);
-
-track.connect(analyser);
-analyser.connect(audioContext.destination);
-
-
-function initScene0() {
-  camera.position.set(0, 2.5, -2);
-  camera.lookAt(0, 1, 0); // le cube est à (0, 1, 0)
-
-  const scene0 = new THREE.Scene();
-  scene0.background = new THREE.Color("#407aec");
-  //scene0.fog = new THREE.FogExp2(scene0.background, 0.035);
-  const ambient = new THREE.AmbientLight(0xffffff, 3.5);
-  scene0.add(ambient);
-  setupComposerForScene(scene0, { bloom: false, glitch: false });
-  //const clock = new THREE.Clock();
-  let phase = 0;
-  scene0.userData.glitchEnabled = false;
-  // Cube principal
-  const cube = new THREE.Mesh(
-    new THREE.BoxGeometry(1, 1, 1),
-    new THREE.MeshStandardMaterial({ color: 0x00ff00 })
-  );
-  cube.position.set(0, 0, 0);
-  cube.visible = false; //on attend 5 secondes avant de l'afficher
-  scene0.add(cube);
-
-  const spheres = [];
-
-  const light = new THREE.PointLight(0xffffff, 1, 100);
-  light.visible = false;
-  scene0.add(light);
-  setTimeout(() => {
-    cube.visible = true;
-  }, 5000);
-  
-  
-    // Ajout des sphères
-    for (let i = 0; i < 3; i++) {
-      const s = new THREE.Mesh(
-        new THREE.SphereGeometry(0.2),
-        new THREE.MeshStandardMaterial({ color: Math.random() * 0xffffff })
-      );
-      s.visible = false;
-      spheres.push(s);
-      scene0.add(s);
-    }
-  
-  setTimeout(() => {
-    spheres.forEach((s) => s.visible = true);
-  }, 15000);
-  
-
-  setTimeout(() => {
-    // Chargement modèle GLTF
-    const loader = new GLTFLoader();
-    loader.load("js/assets/models/fly_agaric_mushroom.glb", (gltf) => {
-      const model = gltf.scene;
-      model.position.y = 1;
-      model.position.x = 0;
-      model.position.z = 0;
-      model.scale.set(0.015, 0.015, 0.015);
-      scene0.add(model);
-      model.userData = { originalMaterial: model.children[0].material };
-      scene0.userData.model = model;
-      if (!scene0.userData.clones) {
-        scene0.userData.clones = [];
-
-        const parts = [
-          "annulus_low_default_0",
-          "hood_low_default_0",
-          "stem_low_default_0",
-        ];
-
-        for (let i = 0; i < 6; i++) {
-          const targetPart = parts[Math.floor(Math.random() * parts.length)];
-
-          const source = model.getObjectByName(targetPart);
-          if (!source) continue;
-
-          const clone = source.clone();
-          clone.material = source.material.clone();
-          clone.material.isCloned = true;
-          clone.scale.set(0.015, 0.015, 0.015);
-
-          clone.position.set(
-            (Math.random() - 0.5) * 4,
-            (Math.random() - 0.5) * 4,
-            (Math.random() - 0.5) * 4
-          );
-
-          clone.rotation.set(
-            Math.random() * Math.PI * 2,
-            Math.random() * Math.PI * 2,
-            Math.random() * Math.PI * 2
-          );
-
-          clone.userData.velocity = new THREE.Vector3(
-            (Math.random() - 0.5) * 0.05,
-            (Math.random() - 0.5) * 0.05,
-            (Math.random() - 0.5) * 0.05
-          );
-          clone.visible = false;
-
-          scene0.add(clone);
-          scene0.userData.clones.push(clone);
-        }
-      }
-    });
-  }, 20000);
-
-  setTimeout(() => {
-    light.visible = true;
-    light.position.set(0, 5, 5);//verifier ce truc
-  }, 100);
-
-  setTimeout(() => {
-    phase = 1; // déclenche le glitch des sphères uniquement
-  }, 27000);
-  
-  setTimeout(() => {
-    phase = 2;// déclenche le glitch du cube
-  }, 37000);
-
-  setTimeout(() => {
-    phase = 3;//bug champignon
-  }, 46000);
-  
-  setTimeout(() => {
-    currentScene = 1; //oa change de scène ici
-  }, 54000);
-  
-  // Animation
-  scene0.userData.animate = function () {
-    const elapsed = clock.getElapsedTime();
-
-    cube.rotation.y += 0.01;
-    cube.rotation.x += 0.005;
-
-    spheres.forEach((s, i) => {
-      const angle = elapsed + (i * Math.PI * 2) / spheres.length;
-      s.position.set(Math.cos(angle) * 2, 0, Math.sin(angle) * 2);
-    });
-
-    if (phase >= 1) {
-      // Sphères : wireframe + échelle aléatoire
-      spheres.forEach((s) => {
-        s.material.wireframe = true;
-        const scale = 1 + (Math.random() - 0.5) * 0.8; // variation entre 0.6 et 1.4
-        s.scale.set(scale, scale, scale);
-      });}
-    if (phase >= 2) {
-      // Cube : déformation brutale aléatoire à chaque frame
-      cube.scale.set(
-        1 + (Math.random() - 0.5) * 0.5, // variation x entre 0.75 et 1.25
-        1 + (Math.random() - 0.5) * 0.5,
-        1 + (Math.random() - 0.5) * 0.5
-      );
-
-      // Couleur du cube aléatoire
-      cube.material.color.setHSL(Math.random(), 1, 0.5);
-    }
-    if (phase >= 3) {
-
-      // Modification du modèle 3D (s'il existe)
-      if (scene0.userData.model) {
-        scene0.userData.model.traverse((child) => {
-          if (child instanceof THREE.Mesh) {
-            if (!(child instanceof THREE.Mesh)) return;
-
-            if (!child.material.isCloned) {
-              child.material = child.material.clone();
-              child.material.isCloned = true;
-            }
-
-            switch (child.name) {
-              case "annulus_low_default_0":
-                // Anneau : parfois en wireframe, couleur vive
-                child.scale.x = 1 + (Math.random() - 0.5) * 0.3;
-                child.scale.y = 1 + (Math.random() - 0.5) * 0.3;
-                child.scale.z = 1 + (Math.random() - 0.5) * 0.3;
-                child.material.wireframe = Math.random() > 0.5;
-                child.material.color.setHSL(Math.random(), 1, 0.5);
-                child.material.emissive.setHSL(Math.random(), 1, 0.5);
-                child.material.opacity = 0.3 + Math.random() * 0.7;
-                child.material.transparent = true;
-                break;
-
-              case "hood_low_default_0":
-                // Chapeau : pulsation et chance de wireframe
-                child.scale.x = 1 + (Math.random() - 0.5) * 0.3;
-                child.scale.y = 1 + (Math.random() - 0.5) * 0.3;
-                child.scale.z = 1 + (Math.random() - 0.5) * 0.3;
-                child.material.wireframe = Math.random() > 0.5;
-                child.scale.setScalar(1 + 0.1 * (Math.random() - 0.5));
-                child.material.color.setHSL(Math.random(), 0.8, 0.6);
-                child.material.opacity = 0.5 + Math.random() * 0.5;
-                child.material.transparent = true;
-                break;
-
-              case "stem_low_default_0":
-                // Tige : scale glitch + clignotement
-                child.scale.x = 1 + (Math.random() - 0.5) * 0.3;
-                child.scale.y = 1 + (Math.random() - 0.5) * 0.3;
-                child.scale.z = 1 + (Math.random() - 0.5) * 0.3;
-                child.material.wireframe = Math.random() > 0.7;
-                child.material.emissive.setHSL(Math.random(), 1, 0.6);
-                break;
-            }
-
-            if (scene0.userData.clones) {
-              scene0.userData.clones.forEach((clone) => {
-                clone.visible = true;
-                // Mouvement
-                clone.position.add(clone.userData.velocity);
-
-                // Rebonds
-                ["x", "y", "z"].forEach((axis) => {
-                  if (Math.abs(clone.position[axis]) > 5) {
-                    clone.userData.velocity[axis] *= -1;
-                  }
-                });
-
-                // Rotation continue
-                clone.rotation.x += 0.01 + Math.random() * 0.01;
-                clone.rotation.y += 0.01 + Math.random() * 0.01;
-
-                // Glitch de couleur
-                clone.material.color.setHSL(Math.random(), 1, 0.5);
-                clone.material.emissive.setHSL(Math.random(), 1, 0.5);
-
-                // Changement de forme
-                clone.scale.set(
-                  0.01 + Math.random() * 0.03,
-                  0.01 + Math.random() * 0.03,
-                  0.01 + Math.random() * 0.03
-                );
-
-                // Clignotement et wireframe
-                clone.material.opacity = 0.3 + Math.random() * 0.7;
-                clone.material.transparent = true;
-                clone.material.wireframe = Math.random() > 0.7;
-              });
-            }
-          }
-        });
-      }
-      
-      light.intensity = Math.abs(Math.sin(elapsed * 10)) * 2;
-    }
-
-    //const elapsed = clock.getElapsedTime();
-    const composer = scene0.userData.composer;
-
-    // Probabilité de glitch (entre 0 et 1)
-    let glitchProbability;
-
-    if (elapsed < 30) {
-      glitchProbability = 0.01; // 1% avant 30 secondes
-    } else if (elapsed >= 30 && elapsed <= 50) {
-      // Augmentation linéaire de 1% à 5% entre 30s et 50s
-      glitchProbability = 0.01 + ((elapsed - 30) / (50 - 30)) * (0.05 - 0.01);
-    } else if (elapsed <= 50) {
-      glitchProbability = 0.1; // 10% avant 50 secondes
-    }else{
-      glitchProbability = 0.5; // 50% après 50 secondes
-    }
-
-    // Tirage aléatoire
-    const random = Math.random(); // entre 0 et 1
-
-    if (random < glitchProbability && !scene0.userData.glitchEnabled) {
-      composer.addPass(glitchPass);
-      scene0.userData.glitchEnabled = true;
-      glitchPass.enabled = true;
-
-      setTimeout(() => {
-        const index = composer.passes.indexOf(glitchPass);
-        if (index !== -1) {
-          composer.passes.splice(index, 1);
-        }
-        scene0.userData.glitchEnabled = false;
-        glitchPass.enabled = false;
-      }, 10 + Math.random() * 50); // 10 à 60 ms
-    } else if (scene0.userData.glitchEnabled && random >= glitchProbability) {
-      const index = composer.passes.indexOf(glitchPass);
-      if (index !== -1) {
-        composer.passes.splice(index, 1);
-      }
-      scene0.userData.glitchEnabled = false;
-      glitchPass.enabled = false;
-    }
-    composer.render();
-  };
-  scenes.push(scene0);
+    animate();
 }
 
-function onWindowResize() {
-  // Update camera aspect ratio
-  camera.aspect = window.innerWidth / window.innerHeight;
-  camera.updateProjectionMatrix();
-
-  // Update renderer size
-  renderer.setSize(window.innerWidth, window.innerHeight);
-
-  // Update all composers
-  composers.forEach((composer) => {
-    composer.setSize(window.innerWidth, window.innerHeight);
-  });
-
-  // Update bloom passes in each composer
-  scenes.forEach((scene) => {
-    if (scene.userData.composer) {
-      const bloomPass = scene.userData.composer.passes.find(
-        (pass) => pass instanceof UnrealBloomPass
-      );
-      if (bloomPass) {
-        bloomPass.resolution.set(window.innerWidth, window.innerHeight);
-      }
-    }
-  });
-}
-
-//pour le resize
-window.addEventListener("resize", onWindowResize);
-
-function initScene1(analyser, dataArray) {
-  const scene1 = new THREE.Scene();
-  scene1.background = new THREE.Color(0x000000);
-
-  const bloomParams = { bloom: true };
-  setupComposerForScene(scene1, bloomParams);
-
-  const forms = [];
-  const maxForms = 600;
-  const tunnelHeight = 100;
-
-  const light = new THREE.AmbientLight(0xffffff, 1.5);
-  scene1.add(light);
-
-  const isNearCamera = (x, y, z) => {
-    const distSq = x * x + y * y + z * z;
-    return distSq < 9;
-  };
-setTimeout(() => {
-    currentScene = 2; //on change de scène ici
-  }, 121000);
-  for (let i = 0; i < maxForms; i++) {
-    const useCube = Math.random() > 0.5;
-    const geom = useCube
-      ? new THREE.BoxGeometry(
-          0.5 + Math.random() * 2,
-          0.5 + Math.random() * 2,
-          0.5 + Math.random() * 2
-        )
-      : new THREE.SphereGeometry(0.5 + Math.random(), 16, 16);
-
-    const mat = new THREE.MeshStandardMaterial({
-      color: new THREE.Color(Math.random(), Math.random(), Math.random()),
-      emissive: new THREE.Color(Math.random(), Math.random(), Math.random()),
-      emissiveIntensity: 1 + Math.random() * 2,
-    });
-
-    const mesh = new THREE.Mesh(geom, mat);
-
-    let x, y, z;
-    do {
-      x = (Math.random() - 0.5) * 40;
-      y = -Math.random() * tunnelHeight;
-      z = (Math.random() - 0.5) * 40;
-    } while (isNearCamera(x, y, z));
-
-    mesh.position.set(x, y, z);
-
-    mesh.userData = {
-      isLit: false,
-      lastToggleTime: 0,
-      transformed: false,
-      shouldBeRectangle: false,
-    };
-
-    scene1.add(mesh);
-    forms.push(mesh);
-  }
-
-//chargement du modele 3D
-const loader = new GLTFLoader();
-loader.load("js/assets/models/fly_agaric_mushroom.glb", (gltf) => {
-  const model = gltf.scene;
-  // Position the model but don't make it visible
-  model.position.y = 1;
-  model.position.x = 0;
-  model.position.z = 0;
-  model.scale.set(0.015, 0.015, 0.015);
-  model.visible = false; // Keep the model hidden
-  scene1.add(model);
-  
-  // Store reference to the model
-  scene1.userData.model = model;
-  
-  // No clones are created
-});
-
-  camera.position.set(0, 0, 0);
-  camera.rotation.set(-Math.PI / 2, 0, 0);
-  let lastBeatTime = 0;
-  const BEAT_INTERVAL = 400;
-  const LIGHT_DURATION = 800;
-  const LIGHT_COUNT = 50;
-
-  scene1.userData.animate = function () {
-    analyser.getByteFrequencyData(dataArray);
-    const speed = 0.6;
-    const elapsedTime = clock.getElapsedTime();
-    const now = performance.now();
-
-    const shakeFrequency = 2.0;
-    const shakeAmplitude = 0.06;
-
-    const xShake = Math.sin(elapsedTime * shakeFrequency) * shakeAmplitude;
-    const yShake = Math.sin(elapsedTime * shakeFrequency * 1.3) * shakeAmplitude;
-    const zShake = Math.cos(elapsedTime * shakeFrequency * 0.7) * shakeAmplitude;
-
-    camera.rotation.set(-Math.PI / 2 + xShake, yShake, zShake);
-
-    const vibrationPulse = Math.sin(elapsedTime * 0.8) > 0.8;
-    if (vibrationPulse) {
-      const vibrationStrength = 0.2;
-      camera.position.x += (Math.random() - 0.5) * vibrationStrength;
-      camera.position.z += (Math.random() - 0.5) * vibrationStrength;
-      camera.position.y += (Math.random() - 0.5) * vibrationStrength * 0.3;
-    }
-
-    if (now - lastBeatTime > BEAT_INTERVAL) {
-      lastBeatTime = now;
-      const shuffled = forms.sort(() => 0.5 - Math.random());
-      const toLight = shuffled.slice(0, LIGHT_COUNT);
-
-      toLight.forEach(form => {
-        form.userData.isLit = true;
-        form.userData.lightStart = now;
-      });
-    }
-
-    forms.forEach((form) => {
-      // Déplacement vertical
-      form.position.y += speed;
+function initGlobalComposer() {
+    // On crée un composer vide pour l'instant, on changera la scene dedans
+    composer = new EffectComposer(renderer);
     
-      // Gestion de l'éclairage temporaire
-      if (form.userData.isLit && now - form.userData.lightStart > LIGHT_DURATION) {
-        form.userData.isLit = false;
-      }
-      form.material.emissiveIntensity = form.userData.isLit ? 3 : 0.05;
-    
-      // Transformation entre 67s et 70s
-      if (elapsedTime > 67 && elapsedTime < 70) {
-        if (!form.userData.transformed && form.geometry.type !== 'BoxGeometry') {
-          const stretchedBox = new THREE.BoxGeometry(
-            0.2 + Math.random() * 0.3,
-            0.2 + Math.random() * 0.3,
-            5 + Math.random() * 5
-          );
-          const angle = Math.atan2(-form.position.z, -form.position.x);
-          form.rotation.y = angle;
-          form.rotation.x = Math.random() * 0.2 - 0.1;
-    
-          form.geometry.dispose();
-          form.geometry = stretchedBox;
-          form.userData.transformed = true;
-        }
-        if (form.position.y > 1) {
-          form.userData.shouldBeRectangle = true;
-        }
-      } 
-      // Transformation entre 70s et 80s
-      else if (elapsedTime >= 70 && elapsedTime < 80) {
-        if (form.geometry.type === 'SphereGeometry') {
-          const stretchedCube = new THREE.BoxGeometry(
-            0.2 + Math.random() * 0.3,
-            0.2 + Math.random() * 0.3,
-            5 + Math.random() * 5
-          );
-          form.geometry.dispose();
-          form.geometry = stretchedCube;
-          form.userData.transformed = true;
-        }
-      }
-    // Matrix effect (green wireframes) between 108s and 121s
-    else if (elapsedTime >= 108 && elapsedTime < 121) {
-      form.material.wireframe = true;
-    form.material.color.set(0x00ff00);        // vert pur
-    form.material.emissive.set(0x00ff00);     // vert lumineux aussi
-    if (form.geometry.type === 'SphereGeometry') {
-      // Créer un nouveau cube avec taille aléatoire
-      const newBox = new THREE.BoxGeometry(
-        0.5 + Math.random() * 2,  // largeur x
-        0.5 + Math.random() * 2,  // hauteur y
-        0.5 + Math.random() * 2   // profondeur z
-      );
-      // Libérer l'ancienne géométrie
-      form.geometry.dispose();
-      // Remplacer par la nouvelle
-      form.geometry = newBox;
-      // Marquer que l'objet est transformé (si tu utilises ce flag)
-      form.userData.transformed = true;
-    }
-  } else {
-    // Si tu veux remettre à l'état normal avant 95s (optionnel)
-    form.material.wireframe = false;
-    // Tu peux aussi remettre la couleur d'origine ici si besoin
-  }
-      // Recyclage dès que la forme dépasse y=1
-      if (form.position.y > 1) {
-        const rand = Math.random();
-        let newGeom;
-    
-        if (rand < 0.33) {
-          // Cube aléatoire
-          newGeom = new THREE.BoxGeometry(
-            0.5 + Math.random() * 2,
-            0.5 + Math.random() * 2,
-            0.5 + Math.random() * 2
-          );
-        } else if (rand < 0.66) {
-          // Sphère aléatoire
-          newGeom = new THREE.SphereGeometry(0.5 + Math.random(), 16, 16);
-    
-          // Changer immédiatement les couleurs
-          const newColor = new THREE.Color(Math.random(), Math.random(), Math.random());
-          const newEmissive = new THREE.Color(Math.random(), Math.random(), Math.random());
-          form.material.color.copy(newColor);
-          form.material.emissive.copy(newEmissive);
-        } else {
-          // Formes variées : tore, dodécaèdre, tétraèdre, octaèdre
-          const shapeType = Math.random();
-    
-          if (shapeType < 0.25) {
-            newGeom = new THREE.TorusGeometry(
-              0.3 + Math.random() * 0.3,
-              0.1 + Math.random() * 0.1,
-              8 + Math.floor(Math.random() * 8),
-              8 + Math.floor(Math.random() * 8)
-            );
-          } else if (shapeType < 0.5) {
-            newGeom = new THREE.DodecahedronGeometry(0.4 + Math.random() * 0.3, 0);
-          } else if (shapeType < 0.75) {
-            newGeom = new THREE.TetrahedronGeometry(0.5 + Math.random() * 0.4, 0);
-          } else {
-            newGeom = new THREE.OctahedronGeometry(0.4 + Math.random() * 0.3, 0);
-          }
-    
-          // Effet de changement progressif des couleurs après 80s
-          if (elapsedTime > 80) {
-            const colorShift = 0.01;
-            form.material.color.offsetHSL(Math.random() * colorShift, 0, 0);
-            form.material.emissive.offsetHSL(Math.random() * colorShift, 0, 0);
-          }
-        }
-    
-        // Appliquer la nouvelle géométrie si définie
-        if (newGeom) {
-          form.geometry.dispose();
-          form.geometry = newGeom;
-        }
-    
-        // Réinitialiser la position hors caméra
-        let x, z;
-        do {
-          x = (Math.random() - 0.5) * 60;
-          z = (Math.random() - 0.5) * 60;
-        } while (isNearCamera(x, 0, z));
-    
-        form.position.set(x, -tunnelHeight, z);
-        form.userData.isLit = false;
-        form.userData.lightStart = 0;
-      }
-    });
-    
-    // Gestion du glitch pour scene1
-    const composer = scene1.userData.composer;
-    let glitchProbability;
-    
-    if (elapsedTime < 40) {
-      // 1% chance avant 40 secondes
-      } else if (elapsedTime >= 40 && elapsedTime < 80) {
-        // Maintenir à 1% entre 40s et 80s
-        glitchProbability = 0.01;
-      } else if (elapsedTime >= 80 && elapsedTime < 108) {
-        // Augmentation drastique de 1% à 100% entre 80s et 108s
-        glitchProbability = 0.01 + ((elapsedTime - 80) / (108 - 80)) * (1.0 - 0.01);
-      } else {
-        // Descend à 0 après 108 secondes
-        glitchProbability = 0.0;
-      }
-    
-    const random = Math.random();
-    
-    if (random < glitchProbability && !scene1.userData.glitchEnabled) {
-      composer.addPass(glitchPass);
-      scene1.userData.glitchEnabled = true;
-      glitchPass.enabled = true;
-      
-      setTimeout(() => {
-      const index = composer.passes.indexOf(glitchPass);
-      if (index !== -1) {
-        composer.passes.splice(index, 1);
-      }
-      scene1.userData.glitchEnabled = false;
-      glitchPass.enabled = false;
-      }, 10 + Math.random() * 50); // 10 à 60 ms
-    } else if (scene1.userData.glitchEnabled && random >= glitchProbability) {
-      const index = composer.passes.indexOf(glitchPass);
-      if (index !== -1) {
-      composer.passes.splice(index, 1);
-      }
-      scene1.userData.glitchEnabled = false;
-      glitchPass.enabled = false;
-    }
-
-    scene1.userData.composer.render();
-  };
-
-  scenes.push(scene1);
-}
-
-function initScene2(camera) {
-    const scene2 = new THREE.Scene();
-    scene2.background = new THREE.Color(0x000000);
-    // Ajout du brouillard à la scène
-    const fogColor = new THREE.Color("#000000"); // Couleur du brouillard
-
-    // Ajout de brouillard exponentiel
-    scene2.fog = new THREE.Fog(fogColor, 10, 1000);
-
-    // Ajout de la lumière ambiante
-    //const ambient = new THREE.AmbientLight(0xffffff, 3.5);
-    //scene2.add(ambient);
-
-    // Ajout de l'eau
-    const waterGeometry = new THREE.PlaneGeometry(100, 100);
-    const water = new Water(
-      waterGeometry,
-      {
-        textureWidth: 512,
-        textureHeight: 512,
-        waterNormals: new THREE.TextureLoader().load('js/assets/textures/Water_N_A.png', function (texture) {
-          texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-        }),
-        sunDirection: new THREE.Vector3(),
-        sunColor: 0x000000,
-        waterColor: 0x000000, // noir
-        distortionScale: 0.50,
-        fog: scene2.fog !== undefined,
-        alpha: 0.0,
-      }
-    );
-    water.rotation.x = -Math.PI / 2;
-    water.position.y = 0;
-    water.scale.set(10, 10, 10);
-    scene2.add(water);
-    setTimeout(() => {
-      currentScene = 3; //on change de scène ici
-    }, 135000);
-  const flyingObjects = [];
-
-  // Générer 600 objets
-  for (let i = 0; i < 600; i++) {
-    let newGeom;
-    const rand = Math.random();
-
-    if (rand < 0.66) {
-      // Sphère aléatoire
-      newGeom = new THREE.SphereGeometry(0.5 + Math.random(), 16, 16);
-    } else {
-      // Formes variées
-      const shapeType = Math.random();
-
-      if (shapeType < 0.25) {
-        newGeom = new THREE.TorusGeometry(
-          0.3 + Math.random() * 0.3,
-          0.1 + Math.random() * 0.1,
-          8 + Math.floor(Math.random() * 8),
-          8 + Math.floor(Math.random() * 8)
-        );
-      } else if (shapeType < 0.5) {
-        newGeom = new THREE.DodecahedronGeometry(0.4 + Math.random() * 0.3, 0);
-      } else if (shapeType < 0.75) {
-        newGeom = new THREE.TetrahedronGeometry(0.5 + Math.random() * 0.4, 0);
-      } else {
-        newGeom = new THREE.OctahedronGeometry(0.4 + Math.random() * 0.3, 0);
-      }
-    }
-
-    const mat = new THREE.MeshStandardMaterial({
-      color: new THREE.Color(Math.random(), Math.random(), Math.random()),
-      emissive: new THREE.Color(Math.random(), Math.random(), Math.random()),
-      emissiveIntensity: 1,
-      roughness: 0.5,
-      metalness: 0.5,
-    });
-
-    const mesh = new THREE.Mesh(newGeom, mat);
-
-    // Position aléatoire dans un cube plus grand (ex: 40x40x40)
-    mesh.position.set(
-      (Math.random() - 0.5) * 40,  // Keep x position the same
-      -20 - Math.random() * 20,    // Position below the floor (negative y)
-      (Math.random() - 0.5) * 40   // Keep z position the same
-    );
-
-    // Vitesse initiale aléatoire (plus petite pour ralentir le mouvement)
-    mesh.userData.velocity = new THREE.Vector3(
-      (Math.random() - 0.5) * 0.01,
-      0.02 + Math.random() * 0.02,
-      (Math.random() - 0.5) * 0.01
-    );
-
-    scene2.add(mesh);
-    flyingObjects.push(mesh);
-  }
-
-  // Angle pour faire tourner la caméra autour du nuage
-  let camAngle = 0;
-
-  scene2.userData.elapsedTime = 0; // initialisé à zéro
-
-scene2.userData.animate = function(deltaTime) {
-  scene2.userData.elapsedTime += deltaTime;
-
-  water.material.uniforms['time'].value += 0.1 / 10.0;
-  water.material.uniforms['distortionScale'].value = 0.5 + Math.sin(Date.now() * 0.001) * 0.5;
-  water.material.uniforms['waterColor'].value = new THREE.Color(0x000000);
-  water.material.uniforms['sunColor'].value = new THREE.Color(0xFFFFFF);
-
-  camAngle += deltaTime * 0.1; // rotation caméra
-  const radius = 50;
-  camera.position.set(
-    Math.cos(camAngle) * radius,
-    20,
-    Math.sin(camAngle) * radius
-  );
-  camera.lookAt(new THREE.Vector3(0, 10, 0));
-
-  flyingObjects.forEach((obj) => {
-    if (scene2.userData.elapsedTime < 3.5) {
-      // Pendant les 3.5 premières secondes, accélérer vers le haut
-      obj.userData.velocity.y += 0.1/60; // accélération vers le haut
-    } else {
-      // Après 3.5 secondes, ralentissement progressif
-      obj.userData.velocity.multiplyScalar(0.95);
-    }
-
-    obj.position.add(obj.userData.velocity);
-
-    // Léger flottement
-    obj.position.x += Math.sin(Date.now() * 0.001 + obj.id) * 0.01;
-    obj.position.z += Math.cos(Date.now() * 0.001 + obj.id) * 0.01;
-  });
-};
-
-
-  scenes.push(scene2);
-  setupComposerForScene(scene2);
-}
-
-function initCreditsScene(camera) {
-  const creditsScene = new THREE.Scene();
-  creditsScene.background = new THREE.Color(0x111111);
-  const elapsedTime = clock.getElapsedTime();
-  // Texte des crédits (tu peux modifier comme tu veux)
-  const creditsText = `
-  Réalisation : Romaric Chaffray
-  Musique : BUZZPSY
-  Développement : Romaric Chaffray
-  `;
-
-  // Création d'un canvas 2D pour dessiner le texte
-  const canvas = document.createElement('canvas');
-  canvas.width = 1024;
-  canvas.height = 512;
-  const ctx = canvas.getContext('2d');
-
-  ctx.fillStyle = 'white';
-  ctx.font = '60px Arial';
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-
-  // Découpage des lignes et affichage centrée
-  const lines = creditsText.trim().split('\n');
-  lines.forEach((line, i) => {
-    ctx.fillText(line.trim(), canvas.width / 2, 60 + i * 60);
-  });
-
-  // Création d'une texture à partir du canvas
-  const texture = new THREE.CanvasTexture(canvas);
-  // Plan pour afficher le texte
-  const geometry = new THREE.PlaneGeometry(16, 8);
-  const material = new THREE.MeshBasicMaterial({ map: texture, transparent: true });
-  const mesh = new THREE.Mesh(geometry, material);
-  mesh.position.y = 0;
-  creditsScene.add(mesh);
-
-  // Position caméra devant le plan
-  camera.position.set(0, 0, 5);
-  console.log(camera.position);
-  camera.lookAt(0, 0, 0);
-  setTimeout(() => {
-    if (audio.isPlaying)
-    {
-      audio.stop(); //on stop la musique
-    }
-    console.log("audio stopped");
-    console.log(audio);
-  }, 149000);
-  // Animation simple : le texte monte lentement
-  creditsScene.userData.animate = function(deltaTime) {
-    //mesh.position.y += deltaTime * 1; // vitesse de montée
-    camera.position.set(0, 0, 5);
-    camera.lookAt(new THREE.Vector3(0, 0, 0));
-    
-    // Remet à la position de départ si le texte est trop haut (loop)
-    if (mesh.position.y > 10) {
-      mesh.position.y = -8;
-    }
-    if (elapsedTime > 149 && audio && audio.isPlaying) {
-      audio.stop();
-    }
-  };
-
-  scenes.push(creditsScene);
-  setupComposerForScene(creditsScene);
-}
-
-
-function setupComposerForScene(scene, options = {}) {
-  const composer = new EffectComposer(renderer);
-  composer.addPass(new RenderPass(scene, camera));
-
-  const bloomPass = new UnrealBloomPass(
-    new THREE.Vector2(window.innerWidth, window.innerHeight),
-    .5,
-    1.5,
-    0.0
-  );
-  bloomPass.enabled = options.bloom !== false;
-  composer.addPass(bloomPass);
-
-  if (options.glitch) {
-    const glitchPass = new GlitchPass();
+    // 1. Bloom (Lueur)
+    bloomPass = new UnrealBloomPass(new THREE.Vector2(window.innerWidth, window.innerHeight), 1.5, 0.4, 0.85);
+    // 2. Glitch (Désactivé par défaut)
+    glitchPass = new GlitchPass();
+    glitchPass.enabled = false;
     glitchPass.goWild = true;
-    composer.addPass(glitchPass);
-  }
 
-  scene.userData.composer = composer; // <=== Important
-  composers.push(composer);
+    // L'ordre est important : RenderPass sera ajouté dynamiquement dans animate ou switch
+    composer.addPass(bloomPass);
+    composer.addPass(glitchPass);
+    composer.addPass(new OutputPass());
 }
 
-//initScenes();
-const clock = new THREE.Clock();
-let lastFrameTime = 0;
-const targetFPS = 10;
+// la slide bar de progression et le temps
+function setupControls() {
+    // Rendre l'interface visible
+    controlsContainer.classList.add('visible');
+
+    // CLIC SUR LA BARRE : Navigation (Seeking)
+    progressContainer.addEventListener('click', (e) => {
+        const rect = progressContainer.getBoundingClientRect();
+        const clickX = e.clientX - rect.left;
+        const width = rect.width;
+        
+        // Calcul du pourcentage
+        const percentage = clickX / width;
+        
+        // Mise à jour de l'audio
+        if (audioElement && audioElement.duration) {
+            audioElement.currentTime = percentage * audioElement.duration;
+            
+            // On reset le calibrage si on saute trop loin pour éviter les bugs de détection
+            // (Optionnel, dépend de ta logique précédente)
+        }
+    });
+
+    // RACCOURCIS CLAVIER (Bonus)
+    window.addEventListener('keydown', (e) => {
+        if (!audioElement) return;
+        
+        if (e.code === 'ArrowRight') {
+            audioElement.currentTime += 5; // Avancer de 5s
+        } else if (e.code === 'ArrowLeft') {
+            audioElement.currentTime -= 5; // Reculer de 5s
+        } else if (e.code === 'Space') {
+            // Pause / Play
+            if (audioElement.paused) audioElement.play();
+            else audioElement.pause();
+        }
+    });
+}
+
+// Fonction utilitaire pour formater le temps (ex: 125s -> 2:05)
+function formatTime(seconds) {
+    const min = Math.floor(seconds / 60);
+    const sec = Math.floor(seconds % 60);
+    return `${min}:${sec < 10 ? '0' : ''}${sec}`;
+}
+
+
+// --- 2. SYSTÈME DE TRANSITIONS ALÉATOIRES ---
+
+function triggerRandomTransition() {
+    if (isTransitioning) return;
+    isTransitioning = true;
+    
+    const nextIndex = (currentSceneIndex + 1) % scenes.length;
+    const transitionType = Math.floor(Math.random() * 3); // 0, 1 ou 2
+
+    console.log(`Transitioning to scene ${nextIndex} via type ${transitionType}`);
+
+    if (transitionType === 0) {
+        // TYPE: GLITCH STORM
+        glitchPass.enabled = true;
+        setTimeout(() => {
+            currentSceneIndex = nextIndex;
+            // Reset caméra si besoin
+        }, 300); // Changer au milieu du glitch
+        setTimeout(() => {
+            glitchPass.enabled = false;
+            isTransitioning = false;
+        }, 800);
+    } 
+    else if (transitionType === 1) {
+        // TYPE: FLASH BLANC (BLOOM EXPLOSION)
+        const originalStrength = bloomPass.strength;
+        bloomPass.strength = 50.0; // Aveuglant
+        bloomPass.radius = 2.0;
+        
+        setTimeout(() => {
+            currentSceneIndex = nextIndex;
+            // Animation de retour à la normale
+            let fadeInterval = setInterval(() => {
+                bloomPass.strength *= 0.8;
+                if(bloomPass.strength <= originalStrength) {
+                    bloomPass.strength = originalStrength;
+                    bloomPass.radius = 0.4;
+                    clearInterval(fadeInterval);
+                    isTransitioning = false;
+                }
+            }, 50);
+        }, 100);
+    } 
+    else {
+        // TYPE: HARD CUT (Simple mais efficace sur un beat)
+        currentSceneIndex = nextIndex;
+        isTransitioning = false;
+    }
+}
+
+// --- 3. LES SCÈNES ---
+
+// SCÈNE 1 : THE CORE (Sphère organique)
+function initSceneCore() {
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color("#050505");
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 0.1, 1000);
+    camera.position.z = 4;
+
+    // Création d'une sphère composée de plein de petits icosaèdres
+    const geometry = new THREE.IcosahedronGeometry(1, 40); // High poly pour déformation
+    const material = new THREE.MeshStandardMaterial({
+        color: 0xff0055, 
+        wireframe: true,
+        emissive: 0x550022
+    });
+    const sphere = new THREE.Mesh(geometry, material);
+    scene.add(sphere);
+
+    const light = new THREE.PointLight(0xffffff, 2, 50);
+    light.position.set(2, 5, 5);
+    scene.add(light);
+    scene.add(new THREE.AmbientLight(0xffffff, 0.2));
+
+    scene.userData = {
+        camera: camera,
+        update: (bassLevel, isBeat) => {
+            sphere.rotation.y += 0.005;
+            sphere.rotation.z += 0.002;
+            
+            // Pulsation
+            const scale = 1 + (bassLevel / 255) * 0.8;
+            sphere.scale.setScalar(scale);
+
+            if(isBeat) {
+                sphere.material.color.setHSL(Math.random(), 1, 0.5);
+                sphere.material.wireframe = !sphere.material.wireframe;
+            }
+        }
+    };
+    scenes.push(scene);
+}
+
+// SCÈNE 2 : HYPERSPEED (Tunnel)
+function initSceneHyperspeed() {
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color("#000000");
+    const camera = new THREE.PerspectiveCamera(90, window.innerWidth/window.innerHeight, 0.1, 2000);
+    camera.position.z = 0;
+
+    const tunnelObjects = [];
+    const colors = [0x00ffff, 0xff00ff, 0xffff00];
+
+    // Créer des anneaux
+    for(let i=0; i<30; i++) {
+        const geo = new THREE.TorusGeometry(3, 0.1, 16, 50);
+        const mat = new THREE.MeshBasicMaterial({ color: colors[i%3] });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.z = -i * 5;
+        scene.add(mesh);
+        tunnelObjects.push(mesh);
+    }
+
+    scene.userData = {
+        camera: camera,
+        update: (bassLevel, isBeat) => {
+            // Vitesse dépend de la basse
+            const speed = 0.5 + (bassLevel / 255) * 2.0;
+
+            tunnelObjects.forEach(obj => {
+                obj.position.z += speed;
+                obj.rotation.z += 0.01;
+                
+                // Reset au fond quand ça passe derrière la caméra
+                if(obj.position.z > 5) {
+                    obj.position.z = -145;
+                    obj.material.color.setHex(colors[Math.floor(Math.random()*3)]);
+                }
+            });
+
+            if(isBeat) {
+                camera.rotation.z += Math.PI / 4; // Rotation brutale caméra
+            } else {
+                camera.rotation.z *= 0.95; // Retour progressif
+            }
+        }
+    };
+    scenes.push(scene);
+}
+
+function initSceneTombe() {
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color("#000000");
+    const camera = new THREE.PerspectiveCamera(90, window.innerWidth/window.innerHeight, 0.1, 2000);
+    camera.position.z = 0;
+
+    const tunnelObjects = [];
+    const colors = [0x00ffff, 0xff00ff, 0xffff00];
+
+    //gen des cubes aléatoires
+    for(let i=0; i<30; i++) {
+        const geo = new THREE.BoxGeometry(1,1,1);
+        const mat = new THREE.MeshBasicMaterial({ color: colors[i%3] });
+        const mesh = new THREE.Mesh(geo, mat);
+        mesh.position.y = -i * 5;
+        mesh.position.x = (Math.random() - 0.5) * 10;
+        mesh.position.z = (Math.random() - 0.5) * 10 - 20;
+        scene.add(mesh);
+        tunnelObjects.push(mesh);
+    }
+
+    scene.userData = {
+        camera: camera,
+        update: (bassLevel, isBeat) => {
+            // Vitesse dépend de la basse
+            const speed = 0.5 + (bassLevel / 255) * 2.0;
+
+            tunnelObjects.forEach(obj => {
+                obj.position.y += speed;
+                obj.rotation.z += 0.01;
+                
+                // Reset au fond quand ça passe derrière la caméra avec position aléatoire
+                if(obj.position.y > 5) {
+                    obj.position.y = -145;
+                    obj.position.x = (Math.random() - 0.5) * 10;
+                    obj.position.z = (Math.random() - 0.5) * 10 - 20;
+                    obj.material.color.setHex(colors[Math.floor(Math.random()*3)]);
+                }
+            });
+
+            if(isBeat) {
+                camera.rotation.z += Math.PI / 4; // Rotation brutale caméra
+            } else {
+                camera.rotation.z *= 0.95; // Retour progressif
+            }
+        }
+    };
+    scenes.push(scene);
+}
+
+// SCÈNE 3 : MATRIX PARTICLES
+function initSceneMatrix() {
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color("#001100");
+    const camera = new THREE.PerspectiveCamera(75, window.innerWidth/window.innerHeight, 1, 1000);
+    camera.position.set(0, 20, 50);
+    camera.lookAt(0,0,0);
+
+    const geometry = new THREE.BufferGeometry();
+    const count = 2000;
+    const positions = new Float32Array(count * 3);
+    
+    for(let i=0; i<count*3; i++) {
+        positions[i] = (Math.random() - 0.5) * 100;
+    }
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    
+    const material = new THREE.PointsMaterial({
+        color: 0x00ff00,
+        size: 0.5,
+        sizeAttenuation: true
+    });
+    
+    const particles = new THREE.Points(geometry, material);
+    scene.add(particles);
+
+    scene.userData = {
+        camera: camera,
+        update: (bassLevel, isBeat) => {
+            particles.rotation.y = Date.now() * 0.0005;
+            
+            // Les particules montent
+            const positions = particles.geometry.attributes.position.array;
+            for(let i=1; i<count*3; i+=3) {
+                positions[i] += 0.2 + (bassLevel/255); // montent plus vite avec la basse
+                if(positions[i] > 50) positions[i] = -50;
+            }
+            particles.geometry.attributes.position.needsUpdate = true;
+
+            if(isBeat) {
+                particles.material.size = 2.0;
+                particles.material.color.setHex(0xffffff);
+            } else {
+                particles.material.size = 0.5;
+                particles.material.color.setHex(0x00ff00);
+            }
+        }
+    };
+    scenes.push(scene);
+}
+
+
+// --- 4. BOUCLE PRINCIPALE ---
 
 function animate() {
-  requestAnimationFrame(animate);
-// Ne rien faire si l'animation n'a pas encore démarré
+    requestAnimationFrame(animate);
+    if (!animationStarted) return;
 
-  // Ne rien faire si l'animation n'a pas encore démarré
-//  if (!animationStarted) return;
-  
-  // Vérifier si les scènes ont été initialisées
-  if (scenes.length === 0 || composers.length === 0) return;
+    // 1. Analyse Audio
+    analyser.getByteFrequencyData(dataArray);
 
-  const now = performance.now();
-  if (scenes[currentScene] === scenes[0]) {
-    if (now - lastFrameTime < 1000 / targetFPS) return;
-    lastFrameTime = now;
-  }
+    // 1. Calcul de la basse (Moyenne sur les 20 premières fréquences)
+    let bassSum = 0;
+    for (let i = 0; i < 20; i++) bassSum += dataArray[i];
+    const bassLevel = bassSum / 20;
 
-  const scene = scenes[currentScene];
-  const composer = composers[currentScene];
+    // --- LOGIQUE "ROLLING MAX" (Suivi d'enveloppe) ---
+    
+    // Si le niveau actuel est plus fort que notre max mémorisé, on le met à jour TOUT DE SUITE
+    // C'est la montée instantanée (Attack)
+    if (bassLevel > maxBassDetected) {
+        maxBassDetected = bassLevel;
+    } else {
+        // Sinon, on fait redescendre doucement le max (Decay)
+        // Cela permet au seuil de s'adapter si la musique devient plus calme (Breakdown)
+        // 0.995 = descente lente. 0.990 = descente rapide.
+        maxBassDetected *= 0.9995;
+    }
 
-  // Appelle l'animation personnalisée si définie
-  scene.userData.animate?.(clock.getDelta());
+    // Sécurité : On empêche le max de descendre trop bas (pour ne pas capter le souffle)
+    if (maxBassDetected < 150) maxBassDetected = 150;
 
-  // Rendu avec le post-processing
-  composer.render();
+    // Calcul du seuil dynamique : 95% du max actuel
+    beatThreshold = maxBassDetected * 1.0;
+    //Beat! 209 / 208.791
+    //Beat! 205.75 / 205.54425
+    // ------------------------------------------
+    //console.log("maxBassDetected:", maxBassDetected.toFixed(2), "beatThreshold:", beatThreshold.toFixed(2), "bassLevel:", bassLevel.toFixed(2));
+    // Détection Beat
+    const now = performance.now();
+    
+    if (bassLevel > beatThreshold && (now - lastBeatTime > 250)) {
+        // C'est un BEAT !
+        console.log("Beat!", bassLevel, "/", beatThreshold); // Debug utile
+        lastBeatTime = now;
+        beatCounter++;
+
+        if (beatCounter >= BEATS_PER_SCENE) {
+            triggerRandomTransition();
+            beatCounter = 0;
+        }
+    }
+    // ------------------------------------------
+
+    // Détection Beat (avec la variable beatThreshold au lieu de la constante)
+    let isBeat = false;
+    
+    if (bassLevel > beatThreshold && (now - lastBeatTime > 250)) {
+        isBeat = true;
+        console.log("Beat detected! Bass Level:", bassLevel, "Threshold:", beatThreshold, "maxBassDetected:", maxBassDetected);
+        lastBeatTime = now;
+        beatCounter++;
+
+        if (beatCounter >= BEATS_PER_SCENE) {
+            triggerRandomTransition();
+            beatCounter = 0;
+        }
+    }
+
+    // 2. Mise à jour de la scène active
+    const scene = scenes[currentSceneIndex];
+    
+    // Important : Il faut s'assurer que le composer utilise la bonne scène/caméra
+    // On recrée le RenderPass à chaque changement de scène ou on le met à jour ?
+    // Le plus simple avec EffectComposer est de vider les pass et remettre, 
+    // ou d'avoir un RenderPass unique qu'on met à jour.
+    
+    // Méthode optimisée : Mettre à jour la scène et la caméra du RenderPass existant
+    // Note : RenderPass est généralement le premier pass (index 0)
+    let renderPass = composer.passes.find(p => p instanceof RenderPass);
+    if (!renderPass) {
+        renderPass = new RenderPass(scene, scene.userData.camera);
+        composer.insertPass(renderPass, 0);
+    } else {
+        renderPass.scene = scene;
+        renderPass.camera = scene.userData.camera;
+    }
+
+    // Appel de l'animation spécifique de la scène
+    if (scene.userData.update) {
+        scene.userData.update(bassLevel, isBeat);
+    }
+
+    // 3. Rendu
+    composer.render();
+
+    // --- MISE À JOUR UI ---
+    if (audioElement && audioElement.duration) {
+        const current = audioElement.currentTime;
+        const total = audioElement.duration;
+        
+        // Largeur de la barre
+        const percent = (current / total) * 100;
+        progressBar.style.width = `${percent}%`;
+
+        // Texte
+        timeDisplay.innerText = `${formatTime(current)} / ${formatTime(total)}`;
+        
+        // Optionnel : Si la musique est finie, on remet à zéro
+        if (audioElement.ended) {
+            animationStarted = false;
+            // Tu peux relancer une boucle ou afficher un bouton replay ici
+        }
+    }
 }
 
-animate();
-console.log("animationStarted", animationStarted);
+window.addEventListener("resize", () => {
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    composer.setSize(window.innerWidth, window.innerHeight);
+    scenes.forEach(s => {
+        s.userData.camera.aspect = window.innerWidth / window.innerHeight;
+        s.userData.camera.updateProjectionMatrix();
+    });
+});
