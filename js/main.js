@@ -138,6 +138,25 @@ function setupControls() {
             // Pause / Play
             if (audioElement.paused) audioElement.play();
             else audioElement.pause();
+        }// --- DEBUG / MANUAL SWITCH ---
+        // On utilise toLowerCase() pour que ça marche que le CapsLock soit activé ou non
+        else if (e.key.toLowerCase() === 'm') { 
+            console.log("Touche M appuyée !"); // Petit log pour être sûr
+            
+            if (scenes.length === 0) return;
+
+            // Changement immédiat
+            currentSceneIndex = (currentSceneIndex + 1) % scenes.length;
+            
+            // Reset des compteurs pour éviter une double transition immédiate
+            beatCounter = 0;
+            isTransitioning = false; 
+            
+            // Reset des effets visuels qui pourraient être bloqués
+            if(glitchPass) glitchPass.enabled = false;
+            if(bloomPass) bloomPass.strength = 1.5; // Remet la force par défaut
+            
+            console.log(`🎬 Changement manuel vers la scène : ${currentSceneIndex}`);
         }
     });
 }
@@ -294,19 +313,28 @@ function initSceneTombe() {
     const scene = new THREE.Scene();
     scene.background = new THREE.Color("#000000");
     const camera = new THREE.PerspectiveCamera(90, window.innerWidth/window.innerHeight, 0.1, 2000);
+    camera.lookAt(0, -1, 0);
     camera.position.z = 0;
 
     const tunnelObjects = [];
-    const colors = [0x00ffff, 0xff00ff, 0xffff00];
-
     //gen des cubes aléatoires
-    for(let i=0; i<30; i++) {
-        const geo = new THREE.BoxGeometry(1,1,1);
-        const mat = new THREE.MeshBasicMaterial({ color: colors[i%3] });
+    let couleur;
+    let emission_intensitee = 0.0;
+    for(let i=0; i<100; i++) {
+        const geo = new THREE.BoxGeometry(1,5,1);
+        couleur = Math.random() * 0xffffff;
+        emission_intensitee = Math.random() < 0.3 ? (0.5 + Math.random() * 2.0) : 0.0;
+        const mat = new THREE.MeshStandardMaterial({ 
+            color: couleur,//colors[i%3],
+            // Forcer l'émission pour un bloom uniforme sur toutes les couleurs
+            emissive: couleur, 
+            emissiveIntensity: emission_intensitee });
         const mesh = new THREE.Mesh(geo, mat);
         mesh.position.y = -i * 5;
-        mesh.position.x = (Math.random() - 0.5) * 10;
-        mesh.position.z = (Math.random() - 0.5) * 10 - 20;
+        mesh.position.x = (Math.random()) * 100 - 50;
+        mesh.position.z = (Math.random()) * 100 - 50;
+        // Stocker l'intensité initiale pour le toggle
+        mesh.userData.initialEmissiveIntensity = emission_intensitee;
         scene.add(mesh);
         tunnelObjects.push(mesh);
     }
@@ -319,14 +347,25 @@ function initSceneTombe() {
 
             tunnelObjects.forEach(obj => {
                 obj.position.y += speed;
-                obj.rotation.z += 0.01;
+                //obj.rotation.z += 0.01;
                 
                 // Reset au fond quand ça passe derrière la caméra avec position aléatoire
                 if(obj.position.y > 5) {
-                    obj.position.y = -145;
-                    obj.position.x = (Math.random() - 0.5) * 10;
-                    obj.position.z = (Math.random() - 0.5) * 10 - 20;
-                    obj.material.color.setHex(colors[Math.floor(Math.random()*3)]);
+                    couleur = Math.random() * 0xffffff;
+                    obj.position.y = -400;
+                    obj.position.x = (Math.random()) * 100 - 50;
+                    obj.position.z = (Math.random()) * 100 - 50;
+                    obj.material.color.setHex(couleur);
+                    obj.material.emissive.setHex(couleur);
+                    obj.material.emissiveIntensity = Math.random() < 0.3 ? (0.5 + Math.random() * 2.0) : 0.0;
+                }
+                if (isBeat) {
+                  // Toggle : si éteint (0) → allumer, si allumé → éteindre
+                    if (obj.material.emissiveIntensity === 0) {
+                        obj.material.emissiveIntensity = obj.userData.initialEmissiveIntensity;
+                    } else {
+                        obj.material.emissiveIntensity = 0;
+                    }
                 }
             });
 
@@ -424,32 +463,14 @@ function animate() {
 
     // Calcul du seuil dynamique : 95% du max actuel
     beatThreshold = maxBassDetected * 1.0;
-    //Beat! 209 / 208.791
-    //Beat! 205.75 / 205.54425
-    // ------------------------------------------
-    //console.log("maxBassDetected:", maxBassDetected.toFixed(2), "beatThreshold:", beatThreshold.toFixed(2), "bassLevel:", bassLevel.toFixed(2));
+    
     // Détection Beat
     const now = performance.now();
-    
-    if (bassLevel > beatThreshold && (now - lastBeatTime > 250)) {
-        // C'est un BEAT !
-        console.log("Beat!", bassLevel, "/", beatThreshold); // Debug utile
-        lastBeatTime = now;
-        beatCounter++;
-
-        if (beatCounter >= BEATS_PER_SCENE) {
-            triggerRandomTransition();
-            beatCounter = 0;
-        }
-    }
-    // ------------------------------------------
-
-    // Détection Beat (avec la variable beatThreshold au lieu de la constante)
     let isBeat = false;
     
     if (bassLevel > beatThreshold && (now - lastBeatTime > 250)) {
         isBeat = true;
-        console.log("Beat detected! Bass Level:", bassLevel, "Threshold:", beatThreshold, "maxBassDetected:", maxBassDetected);
+        console.log("🎵 Beat detected! Bass:", bassLevel.toFixed(2), "/ Threshold:", beatThreshold.toFixed(2));
         lastBeatTime = now;
         beatCounter++;
 
