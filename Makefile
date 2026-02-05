@@ -42,7 +42,7 @@
 PORT ?= 8000
 BROWSER ?= firefox
 
-.PHONY: help serve open clean info check
+.PHONY: help serve open clean info check dev
 
 # Cible par défaut : affiche l'aide
 help:
@@ -91,10 +91,12 @@ dev:
 	@make info
 	@echo ""
 	@(python3 -m http.server $(PORT) 2>/dev/null || python -m SimpleHTTPServer $(PORT)) & \
-	sleep 2 && make open
-	@echo ""
-	@echo "✨ Le serveur tourne en arrière-plan. Pour l'arrêter:"
-	@echo "   $$ killall python3   (ou ferme ce terminal)"
+	SERVER_PID=$$!; \
+	sleep 2 && make open; \
+	echo ""; \
+	echo "✨ Le serveur tourne en arrière-plan (PID: $$SERVER_PID)"; \
+	echo "   Pour l'arrêter, utilise: kill $$SERVER_PID"; \
+	echo "   Ou termine tous les serveurs Python: pkill -f 'python.*http.server'"
 
 # Vérifie les fichiers requis
 check:
