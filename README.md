@@ -75,7 +75,7 @@ Puis ouvrez `http://localhost:8000` dans votre navigateur.
 ## 🛠️ Structure du projet
 
 ```
-demo_tree.js_64mo/
+.
 ├── index.html           # Point d'entrée HTML
 ├── js/
 │   ├── main.js          # Code principal de la démo
@@ -156,7 +156,7 @@ const BEATS_PER_SCENE = 32;
 let beatThreshold = 255;
 
 // Délai minimum entre deux beats (en ms)
-if (bassLevel > beatThreshold && (now - lastBeatTime > 250))
+// Exemple : (now - lastBeatTime > 250) signifie 250ms minimum entre beats
 ```
 
 ## 📚 Ressources pour aller plus loin
